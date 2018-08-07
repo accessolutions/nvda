@@ -5,7 +5,7 @@
 # Babbage B.V., Leonard de Ruijter, Bill Dengler
 
 """Support for UI Automation (UIA) controls."""
-
+import typing
 from ctypes import byref
 from ctypes.wintypes import POINT, RECT
 from comtypes import COMError
@@ -814,6 +814,8 @@ class UIATextInfo(textInfos.TextInfo):
 
 class UIA(Window):
 
+	shouldAllowDuplicateUIAFocusEvent = False
+
 	def _get__coreCycleUIAPropertyCacheElementCache(self):
 		"""
 		A dictionary per core cycle that is ready to map UIA property IDs to UIAElements with that property already cached.
@@ -872,6 +874,19 @@ class UIA(Window):
 			clsList.append(WpfTextView)
 		elif UIAClassName=="NetUIDropdownAnchor":
 			clsList.append(NetUIDropdownAnchor)
+		elif self.windowClassName == "EXCEL6" and self.role == controlTypes.ROLE_PANE:
+			from .excel import BadExcelFormulaEdit
+			clsList.append(BadExcelFormulaEdit)
+		elif self.windowClassName == "EXCEL7":
+			if self.role in (controlTypes.ROLE_DATAITEM, controlTypes.ROLE_HEADERITEM):
+				from .excel import ExcelCell
+				clsList.append(ExcelCell)
+			elif self.role == controlTypes.ROLE_DATAGRID:
+				from .excel import ExcelWorksheet
+				clsList.append(ExcelWorksheet)
+			elif self.role == controlTypes.ROLE_EDITABLETEXT:
+				from .excel import CellEdit
+				clsList.append(CellEdit)
 		elif self.TextInfo == UIATextInfo and (
 			UIAClassName == '_WwG'
 			or self.windowClassName == '_WwG'
@@ -1111,6 +1126,7 @@ class UIA(Window):
 			elementCache=self._coreCycleUIAPropertyCacheElementCache
 			for ID in initialUIACachedPropertyIDs:
 				elementCache[ID]=self.UIAElement
+		self._customProps = UIAHandler.handler.customProperties
 
 	def _isEqual(self,other):
 		if not isinstance(other,UIA):
@@ -1168,8 +1184,46 @@ class UIA(Window):
 		self.UIASelectionItemPattern=self._getUIAPattern(UIAHandler.UIA_SelectionItemPatternId,UIAHandler.IUIAutomationSelectionItemPattern)
 		return self.UIASelectionItemPattern
 
+	def _get_UIASelectionPattern(self):
+		self.UIASelectionPattern = self._getUIAPattern(
+			UIAHandler.UIA_SelectionPatternId,
+			UIAHandler.IUIAutomationSelectionPattern
+		)
+		return self.UIASelectionPattern
+
+	def _get_UIASelectionPattern2(self):
+		self.UIASelectionPattern2 = self._getUIAPattern(
+			UIAHandler.UIA_SelectionPattern2Id,
+			UIAHandler.IUIAutomationSelectionPattern2
+		)
+		return self.UIASelectionPattern2
+
+	def getSelectedItemsCount(self, maxItems=None):
+		p = self.UIASelectionPattern2
+		if p:
+			return p.currentItemCount
+		return 0
+
+	#: Typing information for auto-property: _get_selectionContainer
+	selectionContainer: "typing.Optional[UIA]"
+
+	def _get_selectionContainer(self) -> "typing.Optional[UIA]":
+		p = self.UIASelectionItemPattern
+		if not p:
+			return None
+		e = p.currentSelectionContainer
+		e = e.buildUpdatedCache(UIAHandler.handler.baseCacheRequest)
+		obj = UIA(UIAElement=e)
+		if obj.UIASelectionPattern2:
+			return obj
+		return None
+
 	def _get_UIATextPattern(self):
-		self.UIATextPattern=self._getUIAPattern(UIAHandler.UIA_TextPatternId,UIAHandler.IUIAutomationTextPattern,cache=True)
+		self.UIATextPattern = self._getUIAPattern(
+			UIAHandler.UIA_TextPatternId,
+			UIAHandler.IUIAutomationTextPattern,
+			cache=False
+		)
 		return self.UIATextPattern
 
 	def _get_UIATextEditPattern(self):
@@ -1247,7 +1301,10 @@ class UIA(Window):
 			# #11445: due to timing errors, elements will be instantiated with no automation Id present.
 			return ""
 
-	def _get_name(self):
+	#: Typing info for auto property _get_name()
+	name: str
+
+	def _get_name(self) -> str:
 		try:
 			return self._getUIACacheablePropertyValue(UIAHandler.UIA_NamePropertyId)
 		except COMError:
@@ -1447,7 +1504,10 @@ class UIA(Window):
 			return None
 		return self.correctAPIForRelation(UIA(UIAElement=previousElement))
 
-	def _get_next(self):
+	#: Typing information for auto-property: _get_next
+	next: "typing.Optional[UIA]"
+
+	def _get_next(self) -> "typing.Optional[UIA]":
 		try:
 			nextElement=UIAHandler.handler.baseTreeWalker.GetNextSiblingElementBuildCache(self.UIAElement,UIAHandler.handler.baseCacheRequest)
 		except COMError:
