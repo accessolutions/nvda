@@ -27,7 +27,7 @@ as there are built-in gesture bindings for braille input.
 """
 
 #: Table to use if the input table configuration is invalid.
-FALLBACK_TABLE = "en-us-comp8.ctb"
+FALLBACK_TABLE = "en-ueb-g1.ctb"
 DOT7 = 1 << 6
 DOT8 = 1 << 7
 #: This bit flag must be added to all braille cells when using liblouis with dotsIO.
@@ -66,7 +66,11 @@ class BrailleInputHandler(AutoPropertyObject):
 		try:
 			self._table = brailleTables.getTable(tableName)
 		except LookupError:
-			log.error("Invalid table: %s" % tableName)
+			log.error(
+				"Invalid input table ({config}), "
+				"falling back to default ({fallback})."
+				"".format(config=tableName, fallback=FALLBACK_TABLE)
+			)
 			self._table = brailleTables.getTable(FALLBACK_TABLE)
 		#: A buffer of entered braille cells so that state set by previous cells can be maintained;
 		#: e.g. capital and number signs.
@@ -131,8 +135,7 @@ class BrailleInputHandler(AutoPropertyObject):
 		if (not self.currentFocusIsTextObj or self.currentModifiers) and self._table.contracted:
 			mode |=  louis.partialTrans
 		self.bufferText = louis.backTranslate(
-			[os.path.join(brailleTables.TABLES_DIR, self._table.fileName),
-			"braille-patterns.cti"],
+			[self._table.fileName, "braille-patterns.cti"],
 			data, mode=mode)[0]
 		newText = self.bufferText[oldTextLen:]
 		if newText:
@@ -181,8 +184,7 @@ class BrailleInputHandler(AutoPropertyObject):
 		data = u"".join([unichr(cell | LOUIS_DOTS_IO_START) for cell in cells])
 		oldText = self.bufferText
 		text = louis.backTranslate(
-			[os.path.join(brailleTables.TABLES_DIR, self._table.fileName),
-			"braille-patterns.cti"],
+			[self._table.fileName, "braille-patterns.cti"],
 			data, mode=louis.dotsIO | louis.noUndefinedDots | louis.partialTrans)[0]
 		self.bufferText = text
 		return oldText
@@ -422,7 +424,15 @@ class BrailleInputHandler(AutoPropertyObject):
 	def handlePostConfigProfileSwitch(self):
 		table = config.conf["braille"]["inputTable"]
 		if table != self._table.fileName:
-			self._table = brailleTables.getTable(table)
+			try:
+				self._table = brailleTables.getTable(tableName)
+			except LookupError:
+				log.error(
+					"Invalid input table ({config}), "
+					"falling back to default ({fallback})."
+					"".format(config=tableName, fallback=FALLBACK_TABLE)
+				)
+				self._table = brailleTables.getTable(FALLBACK_TABLE)
 
 def formatDotNumbers(dots):
 	out = []

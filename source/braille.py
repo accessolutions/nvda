@@ -36,6 +36,10 @@ import hwPortUtils
 import bdDetect
 import winUser
 
+
+#: Table to use if the input table configuration is invalid.
+FALLBACK_TABLE = "en-ueb-g1.ctb"
+
 roleLabels = {
 	# Translators: Displayed in braille for an object which is a
 	# window.
@@ -420,8 +424,7 @@ class Region(object):
 		if config.conf["braille"]["expandAtCursor"] and self.cursorPos is not None:
 			mode |= louis.compbrlAtCursor
 		self.brailleCells, self.brailleToRawPos, self.rawToBraillePos, self.brailleCursorPos = louisHelper.translate(
-			[os.path.join(brailleTables.TABLES_DIR, config.conf["braille"]["translationTable"]),
-				"braille-patterns.cti"],
+			[handler.table.fileName, "braille-patterns.cti"],
 			self.rawText,
 			typeform=self.rawTextTypeforms,
 			mode=mode,
@@ -1551,7 +1554,21 @@ class BrailleHandler(baseObject.AutoPropertyObject):
 	]
 
 	def __init__(self):
-		louisHelper.initialize()
+		louisHelper.initialize(brailleTables.tablesDirs)
+		tableName = config.conf["braille"]["translationTable"]
+		# #6140: Migrate to new table names as smoothly as possible.
+		newTableName = brailleTables.RENAMED_TABLES.get(tableName)
+		if newTableName:
+			config.conf["braille"]["translationTable"] = newTableName
+		try:
+			self._table = brailleTables.getTable(tableName)
+		except LookupError:
+			log.error(
+				"Invalid translation table ({config}), "
+				"falling back to default ({fallback})."
+				"".format(config=tableName, fallback=FALLBACK_TABLE)
+			)
+			self._table = brailleTables.getTable(FALLBACK_TABLE)
 		self.display = None
 		self.displaySize = 0
 		self.mainBuffer = BrailleBuffer(self)
@@ -1586,6 +1603,16 @@ class BrailleHandler(baseObject.AutoPropertyObject):
 			self.display = None
 		_BgThread.stop(timeout=bgThreadStopTimeout)
 		louisHelper.terminate()
+
+	def _get_table(self):
+		"""The translation table to use for braille input.
+		@rtype: L{brailleTables.BrailleTable}
+		"""
+		return self._table
+
+	def _set_table(self, table):
+		self._table = table
+		config.conf["braille"]["translationTable"] = table.fileName
 
 	def getTether(self):
 		return self._tether
@@ -1988,6 +2015,17 @@ class BrailleHandler(baseObject.AutoPropertyObject):
 		):
 			self.setDisplayByName(display)
 		self._tether = config.conf["braille"]["tetherTo"]
+		table = config.conf["braille"]["translationTable"]
+		if table != self._table.fileName:
+			try:
+				self._table = brailleTables.getTable(tableName)
+			except LookupError:
+				log.error(
+					"Invalid translation table ({config}), "
+					"falling back to default ({fallback})."
+					"".format(config=tableName, fallback=FALLBACK_TABLE)
+				)
+				self._table = brailleTables.getTable(FALLBACK_TABLE)
 
 	def handleDisplayUnavailable(self):
 		"""Called when the braille display becomes unavailable.
@@ -2120,11 +2158,6 @@ def initialize():
 	global handler
 	config.addConfigDirsToPythonPackagePath(brailleDisplayDrivers)
 	log.info("Using liblouis version %s" % louis.version())
-	# #6140: Migrate to new table names as smoothly as possible.
-	oldTableName = config.conf["braille"]["translationTable"]
-	newTableName = brailleTables.RENAMED_TABLES.get(oldTableName)
-	if newTableName:
-		config.conf["braille"]["translationTable"] = newTableName
 	handler = BrailleHandler()
 	# #7459: the syncBraille has been dropped in favor of the native hims driver.
 	# Migrate to renamed drivers as smoothly as possible.
