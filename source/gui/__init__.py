@@ -894,10 +894,11 @@ class ExecAndPump(threading.Thread):
 		self.kwargs = kwargs
 		if hasattr(func, "__qualname__"):  # _FuncPtr doesn't have this
 			if hasattr(func, "__func__"):
-				fname = func.__func__.__module__
+				fname = func.__func__.__module__ or ""
 			else:
-				fname = func.__module__
-			fname += f".{func.__qualname__}"
+				fname = func.__module__ or ""
+			# For functions defined in the Python console, L{__module__} is L{None}
+			fname += f"{'.' if fname else ''}{func.__qualname__}"
 		else:
 			fname = repr(func)
 		super().__init__(name=f"{self.__class__.__module__}.{self.__class__.__qualname__}({fname})")
