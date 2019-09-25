@@ -46,6 +46,13 @@ void IA2AttribsToMap(const wstring &attribsString, map<wstring, wstring> &attrib
 	// If there was no trailing semi-colon, we need to handle the last attribute.
 	if (!key.empty())
 		attribsMap[key] = str;
+	// Truncate the value of "src" if it contains data (eg. Base64)
+	map<wstring,wstring>::const_iterator attribsMapIt;
+	if ((attribsMapIt = attribsMap.find(L"src")) != attribsMap.end()) {
+		if (attribsMapIt->second.substr(0, 5) == L"data:") {
+			attribsMap[L"src"] = L"data:<truncated>";
+		}
+	}
 }
 
 CComPtr<IAccessibleHyperlink> HyperlinkGetter::next() {
