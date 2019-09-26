@@ -532,9 +532,16 @@ VBufStorage_fieldNode_t* GeckoVBufBackend_t::fillVBuf(IAccessible2* pacc,
 	//get IA2Attributes -- IAccessible2 attributes;
 	BSTR IA2Attributes;
 	map<wstring,wstring> IA2AttribsMap;
+	map<wstring,wstring>::const_iterator IA2AttribsMapIt;
 	if(pacc->get_attributes(&IA2Attributes)==S_OK) {
 		IA2AttribsToMap(IA2Attributes,IA2AttribsMap);
 		SysFreeString(IA2Attributes);
+		// Truncate the value of "src" if it contains data (eg. Base64)
+		if ((IA2AttribsMapIt = IA2AttribsMap.find(L"src")) != IA2AttribsMap.end()) {
+			if (IA2AttribsMapIt->second.substr(0, 5) == L"data:") {
+				IA2AttribsMap[L"src"] = L"data:<truncated>";
+			}
+		}
 		// Add each IA2 attribute as an attrib.
 		for(map<wstring,wstring>::const_iterator it=IA2AttribsMap.begin();it!=IA2AttribsMap.end();++it) {
 			s<<L"IAccessible2::attribute_"<<it->first;
@@ -543,7 +550,6 @@ VBufStorage_fieldNode_t* GeckoVBufBackend_t::fillVBuf(IAccessible2* pacc,
 		}
 	} else
 		LOG_DEBUG(L"pacc->get_attributes failed");
-	map<wstring,wstring>::const_iterator IA2AttribsMapIt;
 
 	//Check IA2Attributes, and or the role etc to work out if this object is a block element
 	bool isBlockElement=TRUE;
