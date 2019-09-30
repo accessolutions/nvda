@@ -51,6 +51,8 @@ import weakref
 import time
 import keyLabels
 from .dpiScalingHelper import DpiScalingHelperMixin
+from typing import Tuple
+
 
 class SettingsDialog(wx.Dialog, DpiScalingHelperMixin, metaclass=guiHelper.SIPABCMeta):
 	"""A settings dialog.
@@ -3242,13 +3244,27 @@ class InputGesturesDialog(SettingsDialog):
 	title = _("Input Gestures")
 
 	def __init__(self, parent):
+		self._addChoice_cancelled = False
+		self._addChoice_added = False
+		self.lastFilter = ""
+		self.tempUserMap = inputCore.GlobalGestureMap()
+		self.allGestures = {}
+		self.nonUserGestures = inputCore.manager.getAllGestureMappings(
+			obj=gui.mainFrame.prevFocus,
+			ancestors=gui.mainFrame.prevFocusAncestors,
+			userGestureMap=self.tempUserMap
+		)
+		for entry in inputCore.manager.userGestureMap.dump():
+			self.tempUserMap.add(*entry)
+		self.dirty = False
+		self.lastFilter = None
 		super().__init__(parent, resizeable=True)
 
 	def makeSettings(self, settingsSizer):
 		filterSizer = wx.BoxSizer(wx.HORIZONTAL)
 		# Translators: The label of a text field to search for gestures in the Input Gestures dialog.
 		filterLabel = wx.StaticText(self, label=pgettext("inputGestures", "&Filter by:"))
-		filter = wx.TextCtrl(self)
+		filter = self.filter = wx.TextCtrl(self)
 		filterSizer.Add(filterLabel, flag=wx.ALIGN_CENTER_VERTICAL)
 		filterSizer.AddSpacer(guiHelper.SPACE_BETWEEN_ASSOCIATED_CONTROL_HORIZONTAL)
 		filterSizer.Add(filter, proportion=1)
@@ -3262,8 +3278,7 @@ class InputGesturesDialog(SettingsDialog):
 		tree.Bind(wx.EVT_TREE_SEL_CHANGED, self.onTreeSelect)
 		settingsSizer.Add(tree, proportion=1, flag=wx.EXPAND)
 
-		self.gestures = inputCore.manager.getAllGestureMappings(obj=gui.mainFrame.prevFocus, ancestors=gui.mainFrame.prevFocusAncestors)
-		self.populateTree()
+		self.populateTree(refreshGestures=True)
 
 		settingsSizer.AddSpacer(guiHelper.SPACE_BETWEEN_ASSOCIATED_CONTROL_VERTICAL)
 
@@ -3279,44 +3294,56 @@ class InputGesturesDialog(SettingsDialog):
 		self.removeButton.Bind(wx.EVT_BUTTON, self.onRemove)
 		self.removeButton.Disable()
 
-		self.pendingAdds = set()
-		self.pendingRemoves = set()
-
 		settingsSizer.Add(bHelper.sizer)
 
 	def postInit(self):
 		self.tree.SetFocus()
 
-	def populateTree(self, filter=''):
+	def populateTree(self, refreshGestures: bool = False, select: Tuple[str, str] = None):
+		selectTreeCat = None
+		selectTreeCom = None
+		self.tree.DeleteChildren(self.treeRoot)
+		filter = self.filter.GetValue()
 		if filter:
 			#This regexp uses a positive lookahead (?=...) for every word in the filter, which just makes sure the word is present in the string to be tested without matching position or order.
 			# #5060: Escape the filter text to prevent unexpected matches and regexp errors.
 			# Because we're escaping, words must then be split on "\ ".
 			filter = re.escape(filter)
 			filterReg = re.compile(r'(?=.*?' + r')(?=.*?'.join(filter.split('\ ')) + r')', re.U|re.IGNORECASE)
-		for category in sorted(self.gestures):
+		if refreshGestures:
+			self.allGestures = inputCore.manager.getAllGestureMappings(
+				userGestureMap=self.tempUserMap,
+				nonUserGestureMappings=self.nonUserGestures,
+			)
+		for category in sorted(self.allGestures):
 			treeCat = self.tree.AppendItem(self.treeRoot, category)
-			commands = self.gestures[category]
+			commands = self.allGestures[category]
 			for command in sorted(commands):
 				if filter and not filterReg.match(command):
 					continue
 				treeCom = self.tree.AppendItem(treeCat, command)
-				commandInfo = commands[command]
-				self.tree.SetItemData(treeCom, commandInfo)
-				for gesture in commandInfo.gestures:
+				scriptInfo = commands[command]
+				if (category, command) == select:
+					selectTreeCat = treeCat
+					selectTreeCom = treeCom
+				self.tree.SetItemData(treeCom, scriptInfo)
+				for gesture in scriptInfo.gestures:
 					treeGes = self.tree.AppendItem(treeCom, self._formatGesture(gesture))
 					self.tree.SetItemData(treeGes, gesture)
 			if not self.tree.ItemHasChildren(treeCat):
 				self.tree.Delete(treeCat)
 			elif filter:
 				self.tree.Expand(treeCat)
+		if selectTreeCom:
+			self.tree.Expand(selectTreeCat)
+			self.tree.Expand(selectTreeCom)
+			self.tree.SelectItem(selectTreeCom)
+			self.tree.EnsureVisible(selectTreeCom)
 
 	def onFilterChange(self, evt):
-		filter=evt.GetEventObject().GetValue()
-		self.tree.DeleteChildren(self.treeRoot)
-		self.populateTree(filter)
+		self.populateTree(refreshGestures=False)
 
-	def _formatGesture(self, identifier):
+	def _formatGesture(identifier):
 		try:
 			source, main = inputCore.getDisplayTextForGestureIdentifier(identifier)
 			# Translators: Describes a gesture in the Input Gestures dialog.
@@ -3362,6 +3389,7 @@ class InputGesturesDialog(SettingsDialog):
 
 	def _addCaptured(self, treeGes, scriptInfo, gesture):
 		gids = gesture.normalizedIdentifiers
+		self._addChoice_added = self._addChoice_cancelled = False
 		if len(gids) > 1:
 			# Multiple choices. Present them in a pop-up menu.
 			menu = wx.Menu()
@@ -3372,60 +3400,110 @@ class InputGesturesDialog(SettingsDialog):
 					lambda evt, gid=gid, disp=disp: self._addChoice(treeGes, scriptInfo, gid, disp),
 					item)
 			self.PopupMenu(menu)
-			if not self.tree.GetItemData(treeGes):
+			if not self._addChoice_cancelled and not self._addChoice_added:
 				# No item was selected, so use the first.
 				self._addChoice(treeGes, scriptInfo, gids[0],
 					self._formatGesture(gids[0]))
 			menu.Destroy()
 		else:
-			self._addChoice(treeGes, scriptInfo, gids[0],
-				self._formatGesture(gids[0]))
+			self._addChoice(treeGes, scriptInfo, gesture, gids[0], self._formatGesture(gids[0]))
+
+	@staticmethod
+	def _parseGestureId(identifier: str) -> Tuple[str, str, str]:
+		"""Parse the different parts composing a gesture identifier.
+		
+		Returns (source_class, source_modifier, specifier)
+		
+		Eg. for "kb:nvda+n", returns ("kb", "", "nvda+n")
+		Eg. for "kb(laptop):nvda+l", returns ("kb", "laptop", "nvda+l")
+		"""
+		try:
+			source, sep, specifier = identifier.partition(":")
+			srcClass, sep, tail = source.partition("(")
+			srcMod = tail[:tail.index(")")] if tail else ""
+			return srcClass, srcMod, specifier
+		except (AttributeError, ValueError):
+			log.error(f"Malformed gesture identifier: {identifier}")
+			return "", "", ""
+
+	def _getOverriddenCommand(self, candidateId: str) -> Tuple[str, str, str]:
+		"""Checks whether the given gesture identifier might override an existing command.
+		
+		If so, returns the first L{(category, command, existing_gesture_identifier)}
+		
+		Returns L{None} otherwise.
+		"""
+		candidateSrcClass, candidateSrcMod, candidateSpecifier = self._parseGestureId(candidateId)
+		for category, commands in self.allGestures.items():
+			for command, scriptInfo in commands.items():
+				for existingId in scriptInfo.gestures:
+					existingSrcClass, existingSrcMod, existingSpecifier = self._parseGestureId(existingId)
+					if existingSrcClass != candidateSrcClass or existingSpecifier != candidateSpecifier:
+						continue
+					# If both have a non-empty different source modifier, there is no override
+					if existingSrcMod and candidateSrcMod and existingSrcMod != candidateSrcMod:
+						continue
+					return (category, command, existingId)
 
 	def _addChoice(self, treeGes, scriptInfo, gid, disp):
+		overridden = self._getOverriddenCommand(gid)
+		if overridden:
+			category, command, id_ = overridden
+			gesture = self._formatGesture(id_)
+			if gui.messageBox(
+				# Translators: A prompt before overridding an existing command in the Input Gesture dialog
+				_(
+					f"""This might override an existing gesture.
+					
+					gesture: {gesture}
+					category: {category}
+					command: {command}
+					
+					Are you sure you want to continue?"""
+				),
+				style=wx.OK | wx.CANCEL
+			) != wx.OK:
+				self._addChoice_cancelled = True
+				treeCom = self.tree.GetItemParent(treeGes)
+				self.tree.SelectItem(treeCom)
+				self.tree.Delete(treeGes)
+				self.tree.SetFocus()
+				return
 		entry = (gid, scriptInfo.moduleName, scriptInfo.className, scriptInfo.scriptName)
-		try:
-			# If this was just removed, just undo it.
-			self.pendingRemoves.remove(entry)
-		except KeyError:
-			self.pendingAdds.add(entry)
-		self.tree.SetItemText(treeGes, disp)
-		self.tree.SetItemData(treeGes, gid)
-		scriptInfo.gestures.append(gid)
-		self.onTreeSelect(None)
+		self.tempUserMap.add(*entry, insert=True)
+		self.dirty = self._addChoice_added = True
+		treeCom = self.tree.GetItemParent(treeGes)
+		treeCat = self.tree.GetItemParent(treeCom)
+		category = self.tree.GetItemText(treeCat)
+		# Move the focus away as UIA won't like the focused object to be deleted.
+		self.filter.SetFocus()
+		self.populateTree(refreshGestures=True, select=(category, scriptInfo.displayName))
+		self.tree.SetFocus()
 
 	def onRemove(self, evt):
 		treeGes = self.tree.Selection
 		gesture = self.tree.GetItemData(treeGes)
 		treeCom = self.tree.GetItemParent(treeGes)
 		scriptInfo = self.tree.GetItemData(treeCom)
+		treeCat = self.tree.GetItemParent(treeCom)
+		category = self.tree.GetItemText(treeCat)
 		entry = (gesture, scriptInfo.moduleName, scriptInfo.className, scriptInfo.scriptName)
 		try:
-			# If this was just added, just undo it.
-			self.pendingAdds.remove(entry)
-		except KeyError:
-			self.pendingRemoves.add(entry)
-		self.tree.Delete(treeGes)
-		scriptInfo.gestures.remove(gesture)
+			self.tempUserMap.remove(*entry)
+		except ValueError:
+			self.tempUserMap.add(gesture, scriptInfo.moduleName, scriptInfo.className, None)
+		self.dirty = True
+		# Move the focus away as UIA won't like the focused object to be deleted.
+		self.filter.SetFocus()
+		self.populateTree(refreshGestures=True, select=(category, scriptInfo.displayName))
 		self.tree.SetFocus()
 
 	def onOk(self, evt):
-		for gesture, module, className, scriptName in self.pendingRemoves:
-			try:
-				inputCore.manager.userGestureMap.remove(gesture, module, className, scriptName)
-			except ValueError:
-				# The user wants to unbind a gesture they didn't define.
-				inputCore.manager.userGestureMap.add(gesture, module, className, None)
+		inputCore.manager.userGestureMap.clear()
+		for entry in self.tempUserMap.dump():
+			inputCore.manager.userGestureMap.add(*entry)
 
-		for gesture, module, className, scriptName in self.pendingAdds:
-			try:
-				# The user might have unbound this gesture,
-				# so remove this override first.
-				inputCore.manager.userGestureMap.remove(gesture, module, className, None)
-			except ValueError:
-				pass
-			inputCore.manager.userGestureMap.add(gesture, module, className, scriptName)
-
-		if self.pendingAdds or self.pendingRemoves:
+		if self.dirty:
 			# Only save if there is something to save.
 			try:
 				inputCore.manager.userGestureMap.save()

@@ -32,6 +32,11 @@ import languageHandler
 import controlTypes
 import keyLabels
 import winKernel
+from typing import Dict, Generator, Sequence, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+	from NVDAObjects import NVDAObject
+
 
 #: Script category for emulated keyboard keys.
 # Translators: The name of a category of NVDA commands.
@@ -209,19 +214,24 @@ class GlobalGestureMap(object):
 		self._map.clear()
 		self.lastUpdateContainedError = False
 
-	def add(self, gesture, module, className, script,replace=False):
+	def add(
+			self,
+			gesture: str,
+			module: str,
+			className: str,
+			script: str,
+			replace: bool = False,
+			insert: bool = False
+	):
 		"""Add a gesture mapping.
 		@param gesture: The gesture identifier.
-		@type gesture: str
 		@param module: The name of the Python module containing the target script.
-		@type module: str
 		@param className: The name of the class in L{module} containing the target script.
-		@type className: str
 		@param script: The name of the target script
 			or C{None} to unbind the gesture for this class.
-		@type script: str
-		@param replace: if true replaces all existing bindings for this gesture with the given script, otherwise only appends this binding.
-		@type replace: boolean
+		@param replace: if true replaces all existing bindings for this gesture with the given script,
+			otherwise only appends this binding.
+		@param insert: if L{True} insert this binding instead of appending it.
 		"""
 		gesture = normalizeGestureIdentifier(gesture)
 		try:
@@ -230,7 +240,10 @@ class GlobalGestureMap(object):
 			scripts = self._map[gesture] = []
 		if replace:
 			del scripts[:]
-		scripts.append((module, className, script))
+		if insert:
+			scripts.insert(0, (module, className, script))
+		else:
+			scripts.append((module, className, script))
 
 	def load(self, filename):
 		"""Load map entries from a file.
@@ -383,6 +396,15 @@ class GlobalGestureMap(object):
 
 		with FaultTolerantFile(out.filename) as f:
 			out.write(f)
+
+	def dump(self) -> Generator[Tuple[str, str, str, str], None, None]:
+		"""Dump the entries of this L{GlobalGestureMap} in a format suitable
+		for use by the L{add} method.
+		"""
+		for gesture, scripts in self._map.items():
+			for module, className, script in scripts:
+				yield gesture, module, className, script
+
 
 class InputManager(baseObject.AutoPropertyObject):
 	"""Manages functionality related to input from the user.
@@ -561,20 +583,64 @@ class InputManager(baseObject.AutoPropertyObject):
 		except NotImplementedError:
 			pass
 
-	def getAllGestureMappings(self, obj=None, ancestors=None):
-		if not obj:
-			obj = api.getFocusObject()
-			ancestors = api.getFocusAncestors()
-		return _AllGestureMappingsRetriever(obj, ancestors).results
+	def getAllGestureMappings(
+			self,
+			obj: "NVDAObject" = None,
+			ancestors: Sequence["NVDAObject"] = None,
+			userGestureMap: GlobalGestureMap = None,
+			nonUserGestureMappings: Dict[str, Dict[str, "AllGesturesScriptInfo"]] = None,
+	) -> Dict[str, Dict[str, "AllGesturesScriptInfo"]]:
+		"""Retrieve information about all scripts and their bound gestures,
+		for use by Input Gestures dialog.
+		
+		@param obj: The object for which scripts mappings are computed.
+			Defaults to the currently focused object.
+		@param ancestors: The ancestors of L{obj}.
+		@param userGestureMap: An alternative to the current L{userGestureMap}.
+			The Input Gestures dialog uses it to compute the effect of new settings
+			before applying them.
+		@param nonUserGestureMappings: An alternative to the hard-coded gesture mappings.
+			The Input Gestures dialog typically sets this parameter with the result of
+			a previous call to this method. This allows to recompute the same mappings
+			despite the focus object having moved to the dialog.
+			If set, L{obj} and L{ancestors} are ignored.
+		"""
+		if nonUserGestureMappings is None:
+			if obj is None:
+				obj = api.getFocusObject()
+			if ancestors is None:
+				ancestors = api.getFocusAncestors()
+		return _AllGestureMappingsRetriever(
+			obj,
+			ancestors,
+			userGestureMap=userGestureMap,
+			nonUserGestureMappings=nonUserGestureMappings,
+		).results
 
 class _AllGestureMappingsRetriever(object):
 
-	def __init__(self, obj, ancestors):
+	def __init__(
+			self,
+			obj: "NVDAObject" = None,
+			ancestors: Sequence["NVDAObject"] = None,
+			userGestureMap: GlobalGestureMap = None,
+			nonUserGestureMappings: Dict[str, Dict[str, "AllGesturesScriptInfo"]] = None,
+	):
+		"""See L{InputManager.getAllGestureMappings}
+		"""
 		self.results = {}
 		self.scriptInfo = {}
 		self.handledGestures = set()
 
-		self.addGlobalMap(manager.userGestureMap)
+		if userGestureMap is not None:
+			self.addGlobalMap(userGestureMap)
+		else:
+			self.addGlobalMap(manager.userGestureMap)
+
+		if nonUserGestureMappings is not None:
+			self.addPreviousResults(nonUserGestureMappings)
+			return
+
 		self.addGlobalMap(manager.localeGestureMap)
 		import braille
 		gmap = braille.handler.display.gestureMap
@@ -703,6 +769,21 @@ class _AllGestureMappingsRetriever(object):
 				continue
 			self.handledGestures.add(key)
 			scriptInfo.gestures.append(gesture)
+
+	def addPreviousResults(self, previousResults: Dict[str, Dict[str, "AllGesturesScriptInfo"]]):
+		for category, commands in previousResults.items():
+			for command, scriptInfo in commands.items():
+				for gestureId in scriptInfo.gestures:
+					key = scriptInfo.cls, gestureId
+					if key in self.handledGestures:
+						continue
+					self.handledGestures.add(key)
+				key = scriptInfo.cls, scriptInfo.scriptName
+				if key in self.scriptInfo:
+					self.scriptInfo[key].gestures.extend(scriptInfo.gestures)
+				else:
+					self.addResult(scriptInfo)
+
 
 class AllGesturesScriptInfo(object):
 	__slots__ = ("cls", "scriptName", "category", "displayName", "gestures")
