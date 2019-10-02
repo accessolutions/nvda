@@ -823,7 +823,15 @@ class LanguageRestartDialog(wx.Dialog):
 		mainSizer = wx.BoxSizer(wx.VERTICAL)
 		sHelper = guiHelper.BoxSizerHelper(self, orientation=wx.VERTICAL)
 		# Translators: The message displayed after NVDA interface language has been changed.
-		sHelper.addItem(wx.StaticText(self, label=_("NVDA must be restarted for the new language to take effect.")))
+		label = _("NVDA must be restarted for the new language to take effect.")
+		if config.conf["general"]["saveConfigurationOnExit"]:
+			label += "\n"
+			# Translators: Complement to the message displayed after NVDA interface language has been changed.
+			label += _(
+				"If you choose to restart later, mind saving the configuration first, "
+				"or this change will be lost."
+			)
+		sHelper.addItem(wx.StaticText(self, label=label))
 
 		bHelper = sHelper.addDialogDismissButtons(guiHelper.ButtonHelper(wx.HORIZONTAL))
 		# Translators: The label for a button  in the dialog which appears when the user changed NVDA's interface language.
