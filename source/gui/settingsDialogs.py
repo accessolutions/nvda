@@ -852,6 +852,10 @@ class LanguageRestartDialog(wx.Dialog):
 
 	def onRestartNowButton(self, evt):
 		self.Destroy()
+		if config.conf["general"]["saveConfigurationOnExit"]:
+			language = config.conf["general"]["language"]
+			config.conf.reset()
+			config.conf["general"]["language"] = language
 		config.conf.save()
 		queueHandler.queueFunction(queueHandler.eventQueue,core.restart)
 
