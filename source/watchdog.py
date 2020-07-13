@@ -47,6 +47,21 @@ _suspended = False
 _watcherThread=None
 _cancelCallEvent = None
 
+def getFormattedStacksForAllThreads():
+	"""
+	Generates a string containing a call stack for every Python thread in this process, suitable for logging.
+	"""
+	# First collect the names of all threads that have actually been started by Python itself. 
+	threadNamesByID = {x.ident:x.name for x in threading.enumerate()}
+	stacks=[]
+	# If a Python function is entered by a thread that was not started by Python itself,
+	# It will have a frame, but won't be tracked by Python's threading module and therefore will have no name.
+	for ident, frame in sys._current_frames().items():
+		stack = "".join(traceback.format_stack(frame))
+		name = threadNamesByID.get(ident,"Unknown")
+		stacks.append(f"Python stack for thread {ident} ({name}):\n{stack}")
+	return "\n".join(stacks)
+
 def alive():
 	"""Inform the watchdog that the core is alive.
 	"""
@@ -103,8 +118,10 @@ def _watcher():
 			curTime=time.time()
 			if curTime-lastTime>FROZEN_WARNING_TIMEOUT:
 				lastTime=curTime
-				log.warning("Core frozen in stack:\n%s"%
-					"".join(traceback.format_stack(sys._current_frames()[core.mainThreadId])))
+				# Core is completely frozen.
+				# Collect formatted stacks for all Python threads.
+				stacks = getFormattedStacksForAllThreads()
+				log.error(f"Core frozen in stack!\n{stacks}")
 			_recoverAttempt()
 			time.sleep(RECOVER_ATTEMPT_INTERVAL)
 			if _isAlive():
