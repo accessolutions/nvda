@@ -20,10 +20,8 @@ environment:
   secure: p37Fxo78fsRdmR8v8TPz978QvVaqvbjdIBzFe8ZOpX0FUprm46rkhd374QM1CqMO
  symstore: C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\symstore.exe
 
-init:
- - ps: appveyor\scripts\setBuildVersionVars.ps1
-
 install:
+ - ps: appveyor\scripts\setBuildVersionVars.ps1
  - cd appveyor
  - ps: scripts\decryptFilesForSigning.ps1
  - type ssh_known_hosts >> %userprofile%\.ssh\known_hosts
