@@ -1,4 +1,3 @@
-$ErrorActionPreference = "Stop";
 cmd.exe /c "scons checkPot $sconsArgs"
 if($LastExitCode -ne 0) {
 	Set-AppveyorBuildVariable "testFailExitCode" $LastExitCode

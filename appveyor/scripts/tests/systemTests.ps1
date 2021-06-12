@@ -1,4 +1,3 @@
-$ErrorActionPreference = "Stop";
 $testOutput = (Resolve-Path .\testOutput\)
 $systemTestOutput = (Resolve-Path "$testOutput\system")
 .\runsystemtests.bat --variable whichNVDA:installed --variable installDir:"${env:nvdaLauncherFile}" --include installer

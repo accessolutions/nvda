@@ -1,4 +1,3 @@
-$ErrorActionPreference = "Stop";
 $outDir = (Resolve-Path .\testOutput\unit\)
 $unitTestsXml = "$outDir\unitTests.xml"
 .\rununittests.bat --with-xunit --xunit-file="$unitTestsXml"

@@ -1,4 +1,3 @@
-$ErrorActionPreference = "Stop";
 if ($env:APPVEYOR_PULL_REQUEST_NUMBER -or $env:APPVEYOR_REPO_BRANCH.StartsWith("try-")) {
 	$lintOutput = (Resolve-Path .\testOutput\lint\)
 	$lintSource = (Resolve-Path .\tests\lint\)
