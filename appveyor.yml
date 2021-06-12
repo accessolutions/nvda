@@ -27,12 +27,9 @@ install:
 build_script:
  - ps: appveyor\scripts\setSconsArgs.ps1
  - scons source %sconsArgs%
- - if ERRORLEVEL 1 exit %ERRORLEVEL%
  - scons %sconsOutTargets% %sconsArgs%
- - if ERRORLEVEL 1 exit %ERRORLEVEL%
  - ps: appveyor\scripts\buildSymbolStore.ps1
  - 7z a -tzip -r output\symbols.zip symbols\*.dl_ symbols\*.ex_ symbols\*.pd_
- - if ERRORLEVEL 1 exit %ERRORLEVEL%
 
 before_test:
  - ps: appveyor\scripts\tests\beforeTests.ps1
