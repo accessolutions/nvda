@@ -19,3 +19,5 @@ $sconsArgs += " version_build=$env:APPVEYOR_BUILD_NUMBER"
 # It's possible to work around this, but the workarounds have annoying side effects.
 Set-AppveyorBuildVariable "sconsOutTargets" $sconsOutTargets
 Set-AppveyorBuildVariable "sconsArgs" $sconsArgs
+Write-Host "scons args: $sconsArgs"
+Write-Host "scons output targets: $sconsOutTargets"
