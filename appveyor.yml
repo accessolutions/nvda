@@ -21,29 +21,28 @@ environment:
  symstore: C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\symstore.exe
 
 init:
- - ps: |
+ - ps: appveyor\scripts\setBuildVersionVars.ps1
 
 install:
  - cd appveyor
- # Decrypt files.
- - ps: |
+ - ps: scripts\decryptFilesForSigning.ps1
  - type ssh_known_hosts >> %userprofile%\.ssh\known_hosts
  - cd ..
  - git submodule update --init
 
 build_script:
- - ps: |
+ - ps: appveyor\scripts\setSconsArgs.ps1
  - 'echo scons args: %sconsArgs%'
  - scons source %sconsArgs%
  - if ERRORLEVEL 1 exit %ERRORLEVEL%
  # We don't need launcher to run checkPot, so run the checkPot before launcher.
- - ps: |
+ - ps: appveyor\scripts\tests\translationCheck.ps1
  # The pot gets built by tests, but we don't actually need it as a build artifact.
  - 'echo scons output targets: %sconsOutTargets%'
  - scons %sconsOutTargets% %sconsArgs%
  - if ERRORLEVEL 1 exit %ERRORLEVEL%
  # Build symbol store.
- - ps: |
+ - ps: appveyor\scripts\buildSymbolStore.ps1
  - cd symbols
  - 7z a -tzip -r ..\output\symbols.zip *.dl_ *.ex_ *.pd_
  - if ERRORLEVEL 1 exit %ERRORLEVEL%
@@ -54,21 +53,16 @@ before_test:
  - mkdir testOutput\unit
  - mkdir testOutput\system
  - mkdir testOutput\lint
- - ps: |
+ - ps: appveyor\scripts\installNVDA.ps1
 
 test_script:
-# Unit Tests (Python)
- - ps: |
+ - ps: appveyor\scripts\tests\unitTests.ps1
+ - ps: appveyor\scripts\tests\lintCheck.ps1
+ - ps: appveyor\scripts\tests\systemTests.ps1
 
-# Flake8 Linting
- - ps: |
-
-# System tests
- - ps: |
-
+# fail build if any tests failed
 after_test:
- # fail build if any tests failed
- - ps: |
+ - ps: appveyor\scripts\tests\checkTestFailure.ps1
 
 # Artifacts are required by deploy code,
 artifacts:
@@ -78,14 +72,13 @@ artifacts:
 # Still upload artifacts on failure, they are useful for testing PR builds despite the build perhaps
 # failing for a minor reason (eg linting)
 on_failure:
-#  `- path` is not allowed in `on_failure` use powerShell instead
- - ps: |
+ - ps: appveyor\scripts\uploadArtifacts.ps1
 
 # The server side deploy code ('nvdaAppveyorHook') relies on artifacts, they must be uploaded first.
 # For ordering of appveyor yml phases, see: https://www.appveyor.com/docs/build-configuration/#build-pipeline
 deploy_script:
- - ps: |
+ - ps: appveyor\scripts\deployScript.ps1
 
+# add a message to point to the NVDA build, to make testing PR's easier.
 on_finish:
-  # add a message to point to the NVDA build, to make testing PR's easier.
-  - ps: |
+  - ps: appveyor\scripts\pushPackagingInfo.ps1
