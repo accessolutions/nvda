@@ -33,9 +33,6 @@ build_script:
  - 'echo scons args: %sconsArgs%'
  - scons source %sconsArgs%
  - if ERRORLEVEL 1 exit %ERRORLEVEL%
- # We don't need launcher to run checkPot, so run the checkPot before launcher.
- - ps: appveyor\scripts\tests\translationCheck.ps1
- # The pot gets built by tests, but we don't actually need it as a build artifact.
  - 'echo scons output targets: %sconsOutTargets%'
  - scons %sconsOutTargets% %sconsArgs%
  - if ERRORLEVEL 1 exit %ERRORLEVEL%
@@ -52,8 +49,10 @@ before_test:
  - mkdir testOutput\system
  - mkdir testOutput\lint
  - ps: appveyor\scripts\installNVDA.ps1
+ - ps: Set-AppveyorBuildVariable "testFailExitCode" 0
 
 test_script:
+ - ps: appveyor\scripts\tests\translationCheck.ps1
  - ps: appveyor\scripts\tests\unitTests.ps1
  - ps: appveyor\scripts\tests\lintCheck.ps1
  - ps: appveyor\scripts\tests\systemTests.ps1

@@ -35,4 +35,3 @@ Set-AppveyorBuildVariable "version" $version
 if ($versionType) {
 	Set-AppveyorBuildVariable "versionType" $versionType
 }
-Set-AppveyorBuildVariable "testFailExitCode" 0
