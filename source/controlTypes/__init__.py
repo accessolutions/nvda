@@ -13,16 +13,19 @@ from .role import Role, silentRolesOnFocus, silentValuesForRoles, _roleLabels
 from .state import State, STATES_SORTED, _negativeStateLabels, _stateLabels
 
 
-__all__ = [
-	"IsCurrent",
-	"OutputReason",
-	"processAndLabelStates",
-	"Role",
-	"silentRolesOnFocus",
-	"silentValuesForRoles",
-	"State",
-	"STATES_SORTED",
-]
+# After 2022, this will specify what is exported when performing a star import (from controlTypes import *).
+# Will break backwards compatibility.
+if version_year >= 2022:
+	__all__ = [
+		"IsCurrent",
+		"OutputReason",
+		"processAndLabelStates",
+		"Role",
+		"silentRolesOnFocus",
+		"silentValuesForRoles",
+		"State",
+		"STATES_SORTED",
+	]
 
 
 # Added to maintain backwards compatibility, marked for deprecation to be removed in 2022.1
