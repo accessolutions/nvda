@@ -13,6 +13,8 @@ Please responsibly disclose security issues following NVDA's [security policy](h
 * Updated certifi to 2026.10.23. ([GHSA-3j65-46c5-4grp](https://github.com/nvaccess/nvda/security/advisories/GHSA-3j65-46c5-4grp))
 * Prevent DOS when Remote Access is running. ([GHSA-v99h-jr79-r5cr](https://github.com/nvaccess/nvda/security/advisories/GHSA-v99h-jr79-r5cr), @Cem-Kaya)
 
+* The magnifier now follows what is being read when navigating in math expressions. (#20321, @CyrilleB79)
+
 ### Bug Fixes
 
 * Fixed bug where on Windows 10, the classic `alt+tab` task switcher no longer announced changing the selected task. (#21052, @Cary-rowen)
