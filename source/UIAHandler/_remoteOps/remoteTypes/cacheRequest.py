@@ -9,7 +9,6 @@ from typing import (
 	Iterable,
 )
 from comtypes import GUID
-from comInterfaces import UIAutomationClient as UIA
 from .. import lowLevel
 from .. import instructions
 from ..remoteFuncWrapper import (
@@ -17,7 +16,6 @@ from ..remoteFuncWrapper import (
 )
 from . import (
 	RemoteBaseObject,
-	RemoteInt,
 	RemoteGuid,
 	RemoteIntEnum,
 )
@@ -58,6 +56,8 @@ class RemoteCacheRequest(RemoteBaseObject):
 		self.rob.getDefaultInstructionList().addInstruction(
 			instructions.CacheRequestAddProperty(
 				target=self,
-				propertyId=RemoteGuid.ensureRemote(self.rob, propertyId).lookupId(lowLevel.AutomationIdentifierType.Property)
+				propertyId=RemoteGuid.ensureRemote(self.rob, propertyId).lookupId(
+					lowLevel.AutomationIdentifierType.Property,
+				),
 			),
 		)

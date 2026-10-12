@@ -240,7 +240,9 @@ class RemoteAPI(builder._RemoteBase):
 		# Ensure this else block is directly preceded by an if or elif block
 		prevInstruction = self._lastChainedBlockTailInstruction
 		if not isinstance(prevInstruction, instructions.JumpElse):
-			raise RuntimeError(f"Else block not directly preceded by If block. Expected JumpElse, got {prevInstruction.__class__.__name__}")
+			raise RuntimeError(
+				f"Else block not directly preceded by If block. Expected JumpElse, got {prevInstruction.__class__.__name__}",
+			)
 		self._lastChainedBlockTailInstruction = None
 		if not silent:
 			instructionList.addComment("Else block body")
@@ -404,7 +406,11 @@ class RemoteAPI(builder._RemoteBase):
 		instructionList = self.rob.getDefaultInstructionList()
 		instructionList.addComment(comment)
 
-	def lookupGuidFromAutomationIdentifier(self, automationIdentifier: RemoteInt, identifierType: AutomationIdentifierType) -> RemoteGuid:
+	def lookupGuidFromAutomationIdentifier(
+		self,
+		automationIdentifier: RemoteInt,
+		identifierType: AutomationIdentifierType,
+	) -> RemoteGuid:
 		result = RemoteGuid(self.rob, self.rob.requestNewOperandId())
 		self.rob.getDefaultInstructionList().addInstruction(
 			instructions.LookupGuid(

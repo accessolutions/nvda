@@ -188,6 +188,7 @@ class Test_if(TestCase):
 			with ra.elseBlock():
 				was_in_else.set(True)
 			ra.Return(was_in_if, was_in_elif, was_in_else)
+
 		was_in_if, was_in_elif, was_in_else = op.execute()
 		self.assertFalse(was_in_if)
 		self.assertTrue(was_in_elif)

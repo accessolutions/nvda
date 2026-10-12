@@ -693,7 +693,6 @@ class RemoteArray(RemoteBaseObject):
 
 
 class RemoteStringMap(RemoteBaseObject):
-
 	def _generateInitInstructions(self) -> Iterable[instructions.InstructionBase]:
 		yield instructions.NewStringMap(
 			result=self,
