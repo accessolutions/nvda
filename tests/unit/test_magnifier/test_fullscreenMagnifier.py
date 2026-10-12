@@ -251,6 +251,28 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 
 		magnifier._stopMagnifier()
 
+	def testRecoveryAppliesFilterThroughLimiter(self):
+		"""Recovery restores the colour filter through the flash limiter, not with a raw API call.
+
+		_applyFilter carries the debounce limiter that enforces the WCAG three flashes rule,
+		so the recovery path must not bypass it.
+		"""
+		with patch(
+			"_magnifier.magnifier.FocusManager.getCurrentFocusCoordinates",
+			return_value=Coordinates(0, 0),
+		):
+			magnifier = FullScreenMagnifier()
+		magnifier._consecutiveErrors = 3
+		magnifier._startTimer = MagicMock()
+		magnifier._applyFilter = MagicMock()
+
+		self.mock_mag_fs.reset_mock()
+		magnifier._attemptRecovery()
+
+		magnifier._applyFilter.assert_called_once()
+		# The only colour effect call left is the one in _clearStaleApiState
+		self.assertEqual(self.mock_mag_fs.MagSetFullscreenColorEffect.call_count, 1)
+
 	def testAttemptRecoveryFailureStopsMagnifier(self):
 		"""When recovery fails, magnifier is stopped and user is notified."""
 		magnifier = FullScreenMagnifier()
