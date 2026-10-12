@@ -248,42 +248,45 @@ class Magnifier:
 		Update the magnifier position and content.
 		This method is called repeatedly by the timer.
 		Tracking failures are handled by _trackCurrentCoordinates and never counted here.
-		On transient native errors (below threshold): reschedules itself to keep running.
-		On repeated native errors (at threshold): delegates rescheduling to _attemptRecovery.
+		The timer is rescheduled in all cases, so that no failure can leave the magnifier
+		frozen for the rest of the session (#20488), except when recovery takes over
+		rescheduling itself.
 		"""
 		if not self._isActive:
 			return
+		rescheduleHere = True
 		try:
 			self.currentCoordinates = self._trackCurrentCoordinates()
 			self._doUpdate()
 			self._consecutiveErrors = 0
 			self._recoveryAttempts = 0
-		except (OSError, COMError):
-			self._consecutiveErrors += 1
-			if self._consecutiveErrors >= self._MAX_CONSECUTIVE_ERRORS:
-				log.error(  # noqa: G201
-					f"Error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS}), attempting recovery",
-					exc_info=True,
-				)
-				try:
-					self._attemptRecovery()
-				except Exception:
-					# Recovery itself failed: reset counter and restart timer directly
-					# to avoid a permanent freeze (recovery is responsible for rescheduling
-					# but may fail before reaching that point).
-					log.error(  # noqa: G201
-						"Recovery failed unexpectedly, restarting timer to prevent freeze",
-						exc_info=True,
-					)
-					self._consecutiveErrors = 0
-					self._startTimer(self._updateMagnifier)
-				return
+		except (OSError, COMError) as error:
+			rescheduleHere = self._handleNativeUpdateError(error)
+		finally:
+			if rescheduleHere and self._isActive:
+				self._startTimer(self._updateMagnifier)
+
+	def _handleNativeUpdateError(self, error: Exception) -> bool:
+		"""
+		Count a Magnification API failure and trigger recovery once the threshold is reached.
+
+		:param error: The native error that interrupted the update.
+		:return: True if the caller should reschedule the update timer, False if recovery
+			has taken ownership of rescheduling.
+		"""
+		self._consecutiveErrors += 1
+		if self._consecutiveErrors < self._MAX_CONSECUTIVE_ERRORS:
 			log.warning(
 				f"Transient error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS})",
-				exc_info=True,
+				exc_info=error,
 			)
-		# Always reschedule the timer to keep the magnifier alive
-		self._startTimer(self._updateMagnifier)
+			return True
+		log.error(
+			f"Error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS}), attempting recovery",
+			exc_info=error,
+		)
+		self._attemptRecovery()
+		return False
 
 	def _doUpdate(self) -> None:
 		"""

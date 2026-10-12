@@ -264,7 +264,11 @@ class TestMagnifier(_TestMagnifier):
 		self.assertEqual(self.magnifier._consecutiveErrors, 1)
 
 	def testUpdateMagnifierRecoveryFailureSafelyRestartsTimer(self):
-		"""If _attemptRecovery itself raises, the timer must still be restarted to prevent a freeze."""
+		"""If _attemptRecovery itself raises, the timer must still be restarted to prevent a freeze.
+
+		The exception is deliberately allowed to propagate so that a broken recovery is reported,
+		but the `finally` clause of _updateMagnifier guarantees the loop keeps running.
+		"""
 		self.magnifier._isActive = True
 		focusCoords = Coordinates(self.screenWidth // 2, self.screenHeight // 2)
 		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
@@ -275,11 +279,51 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._attemptRecovery = MagicMock(side_effect=RuntimeError("recovery crashed"))
 
 		self.magnifier._consecutiveErrors = Magnifier._MAX_CONSECUTIVE_ERRORS - 1
+		with self.assertRaises(RuntimeError):
+			self.magnifier._updateMagnifier()
+
+		# Timer must be restarted even though recovery failed
+		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+
+	def testUpdateLoopSurvivesArbitraryTrackingExceptions(self):
+		"""No tracking failure, whatever its type, may stop the update loop (#20488)."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		exceptions = (
+			RuntimeError("Could not clone range"),
+			AttributeError("NoneType has no attribute 'location'"),
+			NotImplementedError(),
+			ValueError("bad coordinates"),
+			LookupError(),
+			COMError(-2147417848, "RPC_E_DISCONNECTED", None),
+		)
+		for exception in exceptions:
+			with self.subTest(exception=type(exception).__name__):
+				self.magnifier._startTimer.reset_mock()
+				self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+					side_effect=exception,
+				)
+
+				self.magnifier._updateMagnifier()
+
+				self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+				self.assertEqual(self.magnifier._consecutiveErrors, 0)
+				self.assertTrue(self.magnifier._isActive)
+
+	def testTimerNotRescheduledAfterStopDuringUpdate(self):
+		"""Stopping the magnifier from within an update must not resurrect the loop."""
+		self.magnifier._isActive = True
+		self.magnifier._startTimer = MagicMock()
+
+		def stopDuringUpdate():
+			self.magnifier._isActive = False
+
+		self.magnifier._doUpdate = MagicMock(side_effect=stopDuringUpdate)
+
 		self.magnifier._updateMagnifier()
 
-		# Timer must be restarted by the safety net even though recovery failed
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
-		self.assertEqual(self.magnifier._consecutiveErrors, 0)
+		self.magnifier._startTimer.assert_not_called()
 
 	def testUpdateMagnifierResetsErrorCountOnSuccess(self):
 		"""A successful update after errors resets the consecutive error counter."""
