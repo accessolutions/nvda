@@ -341,6 +341,21 @@ class TestMagnifier(_TestMagnifier):
 
 		self.magnifier._startTimer.assert_not_called()
 
+	def testApplyPendingMousePositionLogsOSError(self):
+		"""A native failure on the mouse path is logged and counted, not silently ignored."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock(side_effect=OSError("API failure"))
+		self.magnifier._pendingMouseCoordinates = Coordinates(
+			self.screenWidth // 2,
+			self.screenHeight // 2,
+		)
+
+		with patch("_magnifier.magnifier.log.debugWarning") as mockLog:
+			self.magnifier._applyPendingMousePosition()
+
+		mockLog.assert_called_once()
+		self.assertEqual(self.magnifier._consecutiveErrors, 1)
+
 	def testUpdateMagnifierResetsErrorCountOnSuccess(self):
 		"""A successful update after errors resets the consecutive error counter."""
 		self.magnifier._isActive = True
