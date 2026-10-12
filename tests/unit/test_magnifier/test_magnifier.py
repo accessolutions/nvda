@@ -264,6 +264,55 @@ class TestMagnifier(_TestMagnifier):
 
 		self.assertEqual(self.magnifier._consecutiveTrackingErrors, 0)
 
+	def testPersistentTrackingFailureIsReportedOnce(self):
+		"""Tracking that stays broken for more than a second is announced, exactly once."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147417848, "RPC_E_DISCONNECTED", None),
+		)
+
+		with (
+			patch("_magnifier.magnifier.ui.message") as mockMessage,
+			patch("_magnifier.magnifier.time.monotonic", side_effect=[0.0, 0.5, 1.5, 2.5]),
+		):
+			for _ in range(4):
+				self.magnifier._updateMagnifier()
+
+		mockMessage.assert_called_once()
+
+	def testTrackingFailureShorterThanDelayIsNotReported(self):
+		"""A brief tracking failure does not interrupt the user."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147417848, "RPC_E_DISCONNECTED", None),
+		)
+
+		with (
+			patch("_magnifier.magnifier.ui.message") as mockMessage,
+			patch("_magnifier.magnifier.time.monotonic", side_effect=[0.0, 0.5]),
+		):
+			for _ in range(2):
+				self.magnifier._updateMagnifier()
+
+		mockMessage.assert_not_called()
+
+	def testTrackingRecoveryAllowsANewReport(self):
+		"""Once tracking works again, a later failure can be reported again."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._trackingFailureStartTime = 10.0
+		self.magnifier._trackingFailureReported = True
+
+		self.magnifier._updateMagnifier()
+
+		self.assertIsNone(self.magnifier._trackingFailureStartTime)
+		self.assertFalse(self.magnifier._trackingFailureReported)
+
 	def testUpdateMagnifierCatchesCOMError(self):
 		"""COMError from UIA must be caught and the timer rescheduled."""
 		self.magnifier._isActive = True

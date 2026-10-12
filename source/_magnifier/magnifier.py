@@ -9,6 +9,7 @@ Implements the magnifier global class and its basic functionalities.
 """
 
 from collections.abc import Callable  # noqa: I001
+import time
 from comtypes import COMError
 from logHandler import log
 from NVDAState import _TrackNVDAInitialization
@@ -48,6 +49,11 @@ class Magnifier:
 	_TIMER_INTERVAL_MS: int = 12
 	_MARGIN_BORDER: int = 50
 	_MAX_CONSECUTIVE_ERRORS: int = 3
+	_TRACKING_FAILURE_REPORT_DELAY_SEC: float = 1.0
+	"""
+	How long tracking has to stay broken before the user is told about it.
+	Shorter failures are not worth interrupting speech for: the view simply stays where it is.
+	"""
 	_MAGNIFIED_VIEW: MagnifiedView
 
 	def __init__(self):
@@ -66,6 +72,8 @@ class Magnifier:
 		self._consecutiveErrors: int = 0
 		# Counts failures to find out what to track (UIA, COM); recovery cannot fix those.
 		self._consecutiveTrackingErrors: int = 0
+		self._trackingFailureStartTime: float | None = None
+		self._trackingFailureReported: bool = False
 		self._recoveryAttempts: int = 0
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
@@ -242,11 +250,42 @@ class Magnifier:
 			focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		except Exception:
 			log.exception("Magnifier could not determine what to track")
-			self._consecutiveTrackingErrors += 1
+			self._onTrackingFailed()
 			return self.currentCoordinates
-		self._consecutiveTrackingErrors = 0
+		self._onTrackingSucceeded()
 		self._managePanning(focusCoordinates)
 		return self.currentCoordinates if self._isManualPanning else focusCoordinates
+
+	def _onTrackingFailed(self) -> None:
+		"""
+		Record a tracking failure and report it once it has lasted long enough to be noticeable.
+
+		Reported at most once per run of failures, so a broken tracking source cannot flood
+		speech at the update rate.
+		"""
+		self._consecutiveTrackingErrors += 1
+		now = time.monotonic()
+		if self._trackingFailureStartTime is None:
+			self._trackingFailureStartTime = now
+			return
+		if self._trackingFailureReported:
+			return
+		if now - self._trackingFailureStartTime < self._TRACKING_FAILURE_REPORT_DELAY_SEC:
+			return
+		self._trackingFailureReported = True
+		ui.message(
+			pgettext(
+				"magnifier",
+				# Translators: Message announced when the magnifier can no longer follow the focus.
+				"Magnifier tracking unavailable",
+			),
+		)
+
+	def _onTrackingSucceeded(self) -> None:
+		"""Clear the failure state recorded by _onTrackingFailed."""
+		self._consecutiveTrackingErrors = 0
+		self._trackingFailureStartTime = None
+		self._trackingFailureReported = False
 
 	def _updateMagnifier(self) -> None:
 		"""
