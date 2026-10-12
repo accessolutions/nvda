@@ -213,7 +213,13 @@ class Magnifier:
 		if self._isBlockedByScreenCurtain():
 			return
 		self._isActive = True
-		self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
+		# Fallback used by _trackCurrentCoordinates when tracking is unavailable at start time:
+		# a tracking failure must not prevent the magnifier from starting (#20518).
+		self._currentCoordinates = Coordinates(
+			self._displayOrientation.width // 2,
+			self._displayOrientation.height // 2,
+		)
+		self.currentCoordinates = self._trackCurrentCoordinates()
 		self._mouseHook = MagnifierMouseHook(self._onMouseMove)
 		self._mouseHook.start()
 

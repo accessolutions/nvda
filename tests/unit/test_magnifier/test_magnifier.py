@@ -126,6 +126,22 @@ class TestMagnifier(_TestMagnifier):
 		self.assertTrue(self.magnifier._isActive)
 		self.magnifier._focusManager.getCurrentFocusCoordinates.assert_not_called()
 
+	def testStartMagnifierSurvivesTrackingFailure(self):
+		"""The magnifier still starts when tracking is unavailable (#20518)."""
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147023174, "RPC server is unavailable", None),
+		)
+
+		self.magnifier._startMagnifier()
+
+		self.assertTrue(self.magnifier._isActive)
+		# Falls back to the centre of the primary display
+		self.assertEqual(
+			self.magnifier.currentCoordinates,
+			Coordinates(self.screenWidth // 2, self.screenHeight // 2),
+		)
+		self.assertEqual(self.magnifier._consecutiveTrackingErrors, 1)
+
 	def testUpdateMagnifier(self):
 		"""Updating the magnifier's properties."""
 		# Use center coordinates which will always be within bounds
