@@ -227,21 +227,20 @@ class Magnifier:
 		the screen without fixing anything, since the Magnification API was never the thing that
 		failed (#20860).
 
+		The focus manager is stateful: it reports what changed since the previous call, so it must
+		be consulted exactly once per update cycle.
+
 		:return: The coordinates to magnify, or the last known coordinates if tracking failed.
 		"""
 		try:
-			self._managePanning()
-			coordinates = (
-				self.currentCoordinates
-				if self._isManualPanning
-				else self._focusManager.getCurrentFocusCoordinates()
-			)
+			focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		except Exception:
 			log.exception("Magnifier could not determine what to track")
 			self._consecutiveTrackingErrors += 1
 			return self.currentCoordinates
 		self._consecutiveTrackingErrors = 0
-		return coordinates
+		self._managePanning(focusCoordinates)
+		return self.currentCoordinates if self._isManualPanning else focusCoordinates
 
 	def _updateMagnifier(self) -> None:
 		"""
@@ -457,11 +456,12 @@ class Magnifier:
 
 		return (x, y) != (originalX, originalY)
 
-	def _managePanning(self) -> None:
+	def _managePanning(self, focusCoordinates: Coordinates) -> None:
 		"""
 		Ensure that manual panning mode (self._isManualPanning) is set to False when focus coordinates change.
+
+		:param focusCoordinates: The coordinates reported by the focus manager for this update cycle.
 		"""
-		focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		if self._isManualPanning:  # noqa: SIM102
 			if focusCoordinates != self._lastFocusCoordinates:
 				self._isManualPanning = False
