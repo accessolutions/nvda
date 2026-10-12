@@ -62,7 +62,10 @@ class Magnifier:
 		self._lastFocusCoordinates = Coordinates(0, 0)
 		self._filterType: Filter = getFilter()
 		self._isManualPanning: bool = False
+		# Counts Magnification API failures only: these are the ones recovery can fix.
 		self._consecutiveErrors: int = 0
+		# Counts failures to find out what to track (UIA, COM); recovery cannot fix those.
+		self._consecutiveTrackingErrors: int = 0
 		self._recoveryAttempts: int = 0
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
@@ -214,19 +217,44 @@ class Magnifier:
 		self._mouseHook = MagnifierMouseHook(self._onMouseMove)
 		self._mouseHook.start()
 
+	def _trackCurrentCoordinates(self) -> Coordinates:
+		"""
+		Work out where the magnifier should look, and keep manual panning state up to date.
+
+		Tracking reads the mouse, focus, caret, review and navigator positions, which goes through
+		UIA and COM and therefore fails independently of the Magnification API. Such failures must
+		never reach the native error handler: it would restart the Magnification API, which flashes
+		the screen without fixing anything, since the Magnification API was never the thing that
+		failed (#20860).
+
+		:return: The coordinates to magnify, or the last known coordinates if tracking failed.
+		"""
+		try:
+			self._managePanning()
+			coordinates = (
+				self.currentCoordinates
+				if self._isManualPanning
+				else self._focusManager.getCurrentFocusCoordinates()
+			)
+		except Exception:
+			log.exception("Magnifier could not determine what to track")
+			self._consecutiveTrackingErrors += 1
+			return self.currentCoordinates
+		self._consecutiveTrackingErrors = 0
+		return coordinates
+
 	def _updateMagnifier(self) -> None:
 		"""
 		Update the magnifier position and content.
 		This method is called repeatedly by the timer.
-		On transient errors (below threshold): reschedules itself to keep running.
-		On repeated errors (at threshold): delegates rescheduling to _attemptRecovery.
+		Tracking failures are handled by _trackCurrentCoordinates and never counted here.
+		On transient native errors (below threshold): reschedules itself to keep running.
+		On repeated native errors (at threshold): delegates rescheduling to _attemptRecovery.
 		"""
 		if not self._isActive:
 			return
 		try:
-			self._managePanning()
-			if not self._isManualPanning:
-				self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
+			self.currentCoordinates = self._trackCurrentCoordinates()
 			self._doUpdate()
 			self._consecutiveErrors = 0
 			self._recoveryAttempts = 0

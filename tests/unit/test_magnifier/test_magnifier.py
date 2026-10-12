@@ -196,6 +196,58 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._attemptRecovery.assert_called_once()
 		self.magnifier._startTimer.assert_not_called()
 
+	def testTrackingErrorDoesNotTriggerRecovery(self):
+		"""A tracking failure must never restart the Magnification API (#20860).
+
+		Recovery reinitialises the Magnification API, which flashes the screen. Tracking goes
+		through UIA, so a tracking failure says nothing about the health of the native API.
+		"""
+		self.magnifier._isActive = True
+		self.magnifier.currentCoordinates = self.focusCoords
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147417848, "RPC_E_DISCONNECTED", None),
+		)
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._attemptRecovery = MagicMock()
+
+		updateCount = Magnifier._MAX_CONSECUTIVE_ERRORS + 1
+		for _ in range(updateCount):
+			self.magnifier._updateMagnifier()
+
+		self.magnifier._attemptRecovery.assert_not_called()
+		self.assertEqual(self.magnifier._consecutiveErrors, 0)
+		self.assertEqual(self.magnifier._consecutiveTrackingErrors, updateCount)
+		self.assertTrue(self.magnifier._isActive)
+		self.assertEqual(self.magnifier._startTimer.call_count, updateCount)
+
+	def testTrackingErrorKeepsLastKnownCoordinates(self):
+		"""When tracking fails, the magnified view stays where it was."""
+		self.magnifier._isActive = True
+		self.magnifier.currentCoordinates = self.focusCoords
+		lastKnownCoordinates = self.magnifier.currentCoordinates
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147417848, "RPC_E_DISCONNECTED", None),
+		)
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		self.magnifier._updateMagnifier()
+
+		self.assertEqual(self.magnifier.currentCoordinates, lastKnownCoordinates)
+		self.magnifier._doUpdate.assert_called_once()
+
+	def testTrackingSuccessResetsTrackingErrorCount(self):
+		"""A successful tracking call clears the tracking error counter."""
+		self.magnifier._isActive = True
+		self.magnifier._consecutiveTrackingErrors = 5
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		self.magnifier._updateMagnifier()
+
+		self.assertEqual(self.magnifier._consecutiveTrackingErrors, 0)
+
 	def testUpdateMagnifierCatchesCOMError(self):
 		"""COMError from UIA must be caught and the timer rescheduled."""
 		self.magnifier._isActive = True
