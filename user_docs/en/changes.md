@@ -99,6 +99,9 @@ Executing the find command while the dialog is open brings it to the foreground 
 * Remote Access: NVDA now reports when connecting as the controlled computer fails, while continuing to retry the connection in the background. (#19103, @danielw97)
 * Fixed an error when loading 32-bit synthesizers on some systems. (#20088)
 * Magnifier's "Show entire screen overview" feature now works when relative tracking mode is enabled. (#20746)
+* The Magnifier no longer briefly restores the unmagnified, unfiltered screen when NVDA cannot momentarily determine what to track, such as when an application stops responding. (#20860, @JulienCochuyt)
+* The Magnifier no longer stops following the focus, the mouse and the zoom commands for the rest of the session after an unexpected error. (#20488, @JulienCochuyt)
+* The Magnifier now starts again after the Screen Curtain is turned off, even when tracking information is momentarily unavailable. (#20518, @JulienCochuyt)
 
 #### Performance
 
