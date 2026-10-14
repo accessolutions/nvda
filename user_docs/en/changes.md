@@ -37,6 +37,7 @@
 #### Magnifier
 
 * The Magnifier now adapts when the screen resolution or orientation changes, or another display is used, including after it has been turned off and on. (#21146, @JulienCochuyt)
+* Magnifier no longer flickers and stops when NVDA cannot get the review cursor position, such as when opening some browseable messages or closing a Firefox tab. (#20860, @ChristosBouronikos)
 
 ### Changes for Developers
 
