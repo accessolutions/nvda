@@ -28,6 +28,8 @@ Currently this setting is only supported in Microsoft Word. (#20922, @burrm)
   Users must still add compatible audio components to their Windows PE image for NVDA audio output. (#19537, @akash07k)
 * NVDA can now start when an architecture-specific remote helper loader fails or WTS session information is unavailable.
   If lock-state queries fail, NVDA treats the session as unlocked, so lock-screen restrictions cannot be applied. (#19537, @akash07k)
+* The review cursor now works in HTML messages containing characters such as 𝔓. (#20860, @ChristosBouronikos)
+* NVDA no longer sometimes fails to handle the focus when switching to Windows Terminal. (#20860, @ChristosBouronikos)
 
 #### Braille
 
@@ -40,7 +42,7 @@ Currently this setting is only supported in Microsoft Word. (#20922, @burrm)
 #### Magnifier
 
 * The Magnifier now adapts when the screen resolution or orientation changes, or another display is used, including after it has been turned off and on. (#21146, @JulienCochuyt)
-* Magnifier no longer flickers and stops when NVDA cannot get the review cursor position, such as when opening some browseable messages or closing a Firefox tab. (#20860, @ChristosBouronikos)
+* Magnifier no longer flickers and stops when NVDA cannot get the review cursor position, such as when opening some browseable messages, closing a Firefox tab, or switching to Windows Terminal. (#20860, @ChristosBouronikos)
 
 ### Changes for Developers
 
@@ -51,6 +53,10 @@ Please refer to [the developer guide](https://download.nvaccess.org/documentatio
   which can be `None`.
   `SoundSplitState` remains available from `audio` without Sound Split dependencies. (#19537)
 * The WTS API binding exposes `WTSAPI32_AVAILABLE`; its function bindings remain callable and raise `OSError` when the API is unavailable. (#19537)
+* Added `exceptions.LocationUnavailableError`, a subclass of `LookupError`, raised when a cursor position or its screen location cannot currently be retrieved. (#20860)
+* `api.getReviewPosition` and `vision.util.getContextRect` now raise `exceptions.LocationUnavailableError` when the position or location cannot be retrieved, instead of the underlying error, such as `COMError` or `RuntimeError`. (#20860)
+The underlying error is available as the cause.
+* `review.setCurrentMode` no longer fetches a review position when `updateReviewPosition` is `False`, so the mode is set without checking that a position is available. (#20860)
 
 #### Deprecations
 
