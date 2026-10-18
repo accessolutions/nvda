@@ -492,6 +492,7 @@ class ConfigManager:
 
 	BASE_ONLY_SECTIONS = {  # noqa: RUF012
 		"general",
+		"magnifier",
 		"update",
 		"development",
 		"addonStore",
