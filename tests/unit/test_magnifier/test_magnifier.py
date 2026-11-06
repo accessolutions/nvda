@@ -51,9 +51,7 @@ class _TestMagnifier(unittest.TestCase):
 
 	def tearDown(self):
 		"""Cleanup after each test."""
-		if self.magnifier._timer:
-			self.magnifier._timer.Stop()
-			self.magnifier._timer = None
+		self.magnifier._timer.Stop()
 		if self.magnifier._isActive:
 			self.magnifier._isActive = False
 		self.mouseHook_patcher.stop()
@@ -153,9 +151,7 @@ class TestMagnifier(_TestMagnifier):
 			1,
 		)
 		self.magnifier._doUpdate.assert_called_once()
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier.currentCoordinates, focusCoords)
 		# Successful update should reset error counter
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
@@ -173,9 +169,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._updateMagnifier()
 
 		# Timer must still be rescheduled despite the error
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 1)
 
 	def testUpdateMagnifierTriggersRecoveryAfterMaxErrors(self):
@@ -209,7 +203,7 @@ class TestMagnifier(_TestMagnifier):
 
 		self.magnifier._updateMagnifier()
 
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 1)
 
 	def testUpdateMagnifierKeepsViewWhenTrackingUnavailable(self) -> None:
@@ -229,7 +223,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._doUpdate.assert_called_once()
 		self.magnifier._attemptRecovery.assert_not_called()
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testUpdateMagnifierDoesNotCountTrackingErrors(self) -> None:
 		"""#20860: Only Magnification API errors trigger recovery; the view is updated after other errors."""
@@ -248,7 +242,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._attemptRecovery.assert_not_called()
 		self.magnifier._doUpdate.assert_called_once()
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testUpdateMagnifierKeepsViewOnUnexpectedTrackingError(self) -> None:
 		"""An unexpected tracking error keeps the view, still updates it, and reschedules the timer."""
@@ -263,7 +257,7 @@ class TestMagnifier(_TestMagnifier):
 
 		self.assertEqual(self.magnifier.currentCoordinates, self.focusCoords)
 		self.magnifier._doUpdate.assert_called_once()
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testUpdateMagnifierLogsUnexpectedTrackingErrorOncePerRun(self) -> None:
 		"""Unexpected tracking errors are logged once per failure run, and again after tracking succeeded."""
@@ -306,7 +300,7 @@ class TestMagnifier(_TestMagnifier):
 			self.magnifier._updateMagnifier()
 
 		self.assertFalse(self.magnifier._isTrackingErrorLogged)
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testUpdateMagnifierRecoveryFailureSafelyRestartsTimer(self):
 		"""If _attemptRecovery itself raises, the timer must still be restarted to prevent a freeze."""
@@ -323,7 +317,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._updateMagnifier()
 
 		# Timer must be restarted by the safety net even though recovery failed
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
 
 	def testUpdateMagnifierResetsErrorCountOnSuccess(self):
@@ -350,9 +344,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._attemptRecovery()
 
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testDoUpdate(self):
 		"""DoUpdate function raises NotImplementedError."""
@@ -616,33 +608,42 @@ class TestMagnifier(_TestMagnifier):
 		with self.assertRaises(NotImplementedError):
 			self.magnifier._computeMagnifiedViewCenter()
 
-	def testStartTimer(self):
-		"""Starting the timer."""
-		self.magnifier._stopTimer = MagicMock()
-		callback = MagicMock()
+	def testTimerIsCreatedOnce(self) -> None:
+		"""The magnifier owns a single timer, reused by every start and stop."""
+		timer = self.magnifier._timer
+		self.assertIsInstance(timer, wx.Timer)
 
-		self.magnifier._startTimer(callback)
+		for _ in range(3):
+			self.magnifier._startTimer()
+			self.magnifier._startTimer()
+			self.magnifier._stopTimer()
 
-		self.magnifier._stopTimer.assert_called_once()
-		self.assertIsInstance(self.magnifier._timer, wx.Timer)
+		self.assertIs(self.magnifier._timer, timer)
+
+	def testStartTimer(self) -> None:
+		"""Starting the timer schedules a single update."""
+		self.magnifier._startTimer()
+
 		self.assertTrue(self.magnifier._timer.IsRunning())
+		self.assertTrue(self.magnifier._timer.IsOneShot())
+		self.assertEqual(self.magnifier._timer.GetInterval(), Magnifier._TIMER_INTERVAL_MS)
 
-		# Clean up the timer
-		self.magnifier._timer.Stop()
-		self.magnifier._timer = None
-
-	def testStopTimer(self):
-		"""Stopping the timer."""
-		# Test stopping when timer exists
-		self.magnifier._startTimer(lambda: None)
-		self.assertIsNotNone(self.magnifier._timer)
+	def testStopTimer(self) -> None:
+		"""Stopping the timer cancels the scheduled update, and is safe when none is scheduled."""
+		self.magnifier._startTimer()
+		self.magnifier._stopTimer()
+		self.assertFalse(self.magnifier._timer.IsRunning())
 
 		self.magnifier._stopTimer()
-		self.assertIsNone(self.magnifier._timer)
+		self.assertFalse(self.magnifier._timer.IsRunning())
 
-		# Test stopping when no timer exists (should not raise error)
-		self.magnifier._stopTimer()
-		self.assertIsNone(self.magnifier._timer)
+	def testTimerRunsUpdate(self) -> None:
+		"""When the timer fires, the magnifier is updated."""
+		self.magnifier._updateMagnifier = MagicMock()
+
+		self.magnifier._timer.Notify()
+
+		self.magnifier._updateMagnifier.assert_called_once_with()
 
 	def testClampCoordinates(self):
 		"""Test all boundary clamps (left, right, top, bottom) for both modes."""

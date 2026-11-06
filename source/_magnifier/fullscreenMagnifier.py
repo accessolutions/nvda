@@ -59,7 +59,7 @@ class FullScreenMagnifier(Magnifier):
 			# and causes an error. Thus we disable magnifier update while secure desktop is active.
 			self._stopTimer()
 		else:
-			self._startTimer(self._updateMagnifier)
+			self._startTimer()
 
 	@staticmethod
 	def _isAccessDeniedError(error: OSError) -> bool:
@@ -103,7 +103,7 @@ class FullScreenMagnifier(Magnifier):
 
 		if self._isActive:
 			self._applyFilter()
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	def _clearStaleApiState(self) -> None:
 		"""
@@ -245,7 +245,7 @@ class FullScreenMagnifier(Magnifier):
 
 		self._consecutiveErrors = 0
 		log.debug("Full-screen magnifier recovery succeeded")
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	def _conductRecoveryFailure(self) -> None:
 		"""
@@ -402,7 +402,7 @@ class FullScreenMagnifier(Magnifier):
 		Stop and destroy Spotlight from Full-screen class
 		"""
 		self._spotlightManager._spotlightIsActive = False
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	@override
 	def _getMagnifierParameters(self, coordinates: Coordinates) -> MagnifierParameters:
