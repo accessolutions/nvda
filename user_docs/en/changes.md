@@ -2,6 +2,8 @@
 
 ## 2026.3.2
 
+* The Magnifier now announces when it has been unable to follow the focus, caret or cursor for more than a second. (#21111, @JulienCochuyt)
+
 ### Bug Fixes
 
 * The screen is no longer briefly revealed when enabling the Screen Curtain just after changing the Magnifier's colour filter. (#21109, @JulienCochuyt)

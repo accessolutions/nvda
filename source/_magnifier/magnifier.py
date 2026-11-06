@@ -9,6 +9,7 @@ Implements the magnifier global class and its basic functionalities.
 """
 
 from collections.abc import Callable  # noqa: I001
+import time
 from comtypes import COMError
 from exceptions import CallCancelled, LocationUnavailableError
 from logHandler import log
@@ -49,6 +50,8 @@ class Magnifier:
 	_TIMER_INTERVAL_MS: int = 12
 	_MARGIN_BORDER: int = 50
 	_MAX_CONSECUTIVE_ERRORS: int = 5
+	_TRACKING_FAILURE_REPORT_DELAY_SEC: float = 1.0
+	"""How long the followed source must stay unavailable before the user is told."""
 	_MAGNIFIED_VIEW: MagnifiedView
 
 	def __init__(self):
@@ -66,6 +69,8 @@ class Magnifier:
 		self._consecutiveErrors: int = 0
 		self._recoveryAttempts: int = 0
 		self._isTrackingErrorLogged: bool = False
+		self._trackingFailureStartTime: float | None = None
+		self._isTrackingFailureReported: bool = False
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
 		self._mouseUpdatePending: bool = False
@@ -212,6 +217,7 @@ class Magnifier:
 		if self._isBlockedByScreenCurtain():
 			return
 		self._isActive = True
+		self._reportTrackingFailure(isFailed=False)
 		try:
 			self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		except (COMError, LookupError, OSError, RuntimeError):
@@ -233,6 +239,7 @@ class Magnifier:
 		This method is called repeatedly by the timer.
 		If the tracked location is unavailable, the current view is kept.
 		Unexpected tracking errors also keep the view, and are logged once until tracking succeeds again.
+		When the followed source stays unavailable for a while, this is announced once.
 		Only Magnification API errors count towards recovery:
 		On transient errors (below threshold): reschedules itself to keep running.
 		On repeated errors (at threshold): delegates rescheduling to _attemptRecovery.
@@ -241,6 +248,7 @@ class Magnifier:
 			return
 		recoveryScheduled = False
 		try:
+			isTrackingFailed = False
 			try:
 				# The focus manager reports changes since its previous call, so query it once per update.
 				focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
@@ -249,6 +257,7 @@ class Magnifier:
 					self.currentCoordinates = focusCoordinates
 			except LocationUnavailableError:
 				# #20860: A tracking failure is not a magnification failure.
+				isTrackingFailed = True
 				if _isDebug():
 					log.debug("Tracked location unavailable, keeping current magnifier view", exc_info=True)
 			except CallCancelled:
@@ -256,11 +265,16 @@ class Magnifier:
 			except Exception:
 				# An error type nobody anticipated: keep the view, and log once per failure run
 				# rather than on every update.
+				isTrackingFailed = True
 				if not self._isTrackingErrorLogged:
 					log.exception("Magnifier could not determine what to track, keeping the current view")
 					self._isTrackingErrorLogged = True
 			else:
 				self._isTrackingErrorLogged = False
+				isTrackingFailed = (
+					self._focusManager.getLastFocusType() in self._focusManager.getFailedSources()
+				)
+			self._reportTrackingFailure(isTrackingFailed)
 			try:
 				self._doUpdate()
 				self._consecutiveErrors = 0
@@ -294,6 +308,36 @@ class Magnifier:
 			# Always reschedule the timer to keep the magnifier alive, even after an unexpected error.
 			if self._isActive and not recoveryScheduled:
 				self._startTimer(self._updateMagnifier)
+
+	def _reportTrackingFailure(self, isFailed: bool) -> None:
+		"""
+		Announce once when the followed source has been unavailable for a while.
+
+		The delay is measured in elapsed time rather than update cycles: the timer is only rescheduled
+		after an update has finished, and the conditions that break tracking also slow updates down.
+
+		:param isFailed: Whether the followed source could not be tracked during this update.
+		"""
+		if not isFailed:
+			self._trackingFailureStartTime = None
+			self._isTrackingFailureReported = False
+			return
+		now = time.monotonic()
+		if self._trackingFailureStartTime is None:
+			self._trackingFailureStartTime = now
+			return
+		if self._isTrackingFailureReported:
+			return
+		if now - self._trackingFailureStartTime < self._TRACKING_FAILURE_REPORT_DELAY_SEC:
+			return
+		self._isTrackingFailureReported = True
+		ui.message(
+			pgettext(
+				"magnifier",
+				# Translators: Announced when the magnifier has been unable to follow the focus, caret or cursor for a while.
+				"Magnifier tracking unavailable",
+			),
+		)
 
 	def _doUpdate(self) -> None:
 		"""
