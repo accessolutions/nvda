@@ -10,7 +10,7 @@ Implements the magnifier global class and its basic functionalities.
 
 from collections.abc import Callable  # noqa: I001
 from comtypes import COMError
-from exceptions import LocationUnavailableError
+from exceptions import CallCancelled, LocationUnavailableError
 from logHandler import log
 from NVDAState import _TrackNVDAInitialization
 import wx
@@ -65,6 +65,7 @@ class Magnifier:
 		self._isManualPanning: bool = False
 		self._consecutiveErrors: int = 0
 		self._recoveryAttempts: int = 0
+		self._isTrackingErrorLogged: bool = False
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
 		self._mouseUpdatePending: bool = False
@@ -231,6 +232,7 @@ class Magnifier:
 		Update the magnifier position and content.
 		This method is called repeatedly by the timer.
 		If the tracked location is unavailable, the current view is kept.
+		Unexpected tracking errors also keep the view, and are logged once until tracking succeeds again.
 		Only Magnification API errors count towards recovery:
 		On transient errors (below threshold): reschedules itself to keep running.
 		On repeated errors (at threshold): delegates rescheduling to _attemptRecovery.
@@ -249,6 +251,16 @@ class Magnifier:
 				# #20860: A tracking failure is not a magnification failure.
 				if _isDebug():
 					log.debug("Tracked location unavailable, keeping current magnifier view", exc_info=True)
+			except CallCancelled:
+				raise
+			except Exception:
+				# An error type nobody anticipated: keep the view, and log once per failure run
+				# rather than on every update.
+				if not self._isTrackingErrorLogged:
+					log.exception("Magnifier could not determine what to track, keeping the current view")
+					self._isTrackingErrorLogged = True
+			else:
+				self._isTrackingErrorLogged = False
 			try:
 				self._doUpdate()
 				self._consecutiveErrors = 0
