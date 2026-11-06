@@ -15,6 +15,7 @@
 * While installing or updating NVDA, the progress dialog now reports the actual progress, the current step and the estimated remaining time, following the progress bar output settings. (#2313, @LeonarddeR)
 * The "Maximum number of characters on one line" browse mode setting can now be set from 0 to 1000 characters, instead of 10 to 250. (#20478, @think-tank0)
   * Setting it to 0 means lines are no longer split by length.
+* The Magnifier now announces when it has been unable to follow the focus, caret or cursor for more than a second. (#21111, @JulienCochuyt)
 
 ### Bug Fixes
 
