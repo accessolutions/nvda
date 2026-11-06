@@ -147,10 +147,10 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._isActive = True
 		self.magnifier._updateMagnifier()
 
-		# getCurrentFocusCoordinates is called twice: once in _managePanning and once to update currentCoordinates
+		# The focus manager reports changes since its previous call, so it is queried once per update
 		self.assertEqual(
 			self.magnifier._focusManager.getCurrentFocusCoordinates.call_count,
-			2,
+			1,
 		)
 		self.magnifier._doUpdate.assert_called_once()
 		self.magnifier._startTimer.assert_called_once_with(
@@ -499,25 +499,58 @@ class TestMagnifier(_TestMagnifier):
 		focusA = Coordinates(100, 200)
 		focusB = Coordinates(300, 400)
 
-		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=focusA)
-
 		# When not panning, _lastFocusCoordinates is updated every cycle
 		self.magnifier._isManualPanning = False
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusA)
 		self.assertFalse(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusA)
 
 		# When panning starts and focus hasn't changed, panning continues
 		self.magnifier._isManualPanning = True
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusA)
 		self.assertTrue(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusA)
 
 		# When focus changes while panning, manual panning ends
-		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=focusB)
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusB)
 		self.assertFalse(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusB)
+
+	def testUpdateMagnifierQueriesTrackingOnceWhilePanning(self) -> None:
+		"""While manually panning, the focus manager is still queried once per update, and the view is kept."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		pannedCoordinates = self.magnifier._clampCoordinates(Coordinates(100, 200))
+		self.magnifier.currentCoordinates = pannedCoordinates
+		self.magnifier._isManualPanning = True
+		self.magnifier._lastFocusCoordinates = self.focusCoords
+
+		self.magnifier._updateMagnifier()
+
+		self.magnifier._focusManager.getCurrentFocusCoordinates.assert_called_once()
+		self.assertTrue(self.magnifier._isManualPanning)
+		self.assertEqual(self.magnifier.currentCoordinates, pannedCoordinates)
+
+	def testUpdateMagnifierEndsPanningWhenFocusMoves(self) -> None:
+		"""When the focus moves while panning, the view follows it within the same update."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier.currentCoordinates = self.magnifier._clampCoordinates(Coordinates(100, 200))
+		self.magnifier._isManualPanning = True
+		self.magnifier._lastFocusCoordinates = self.focusCoords
+		movedCoordinates = Coordinates(self.focusCoords.x + 10, self.focusCoords.y + 10)
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=movedCoordinates)
+
+		self.magnifier._updateMagnifier()
+
+		self.magnifier._focusManager.getCurrentFocusCoordinates.assert_called_once()
+		self.assertFalse(self.magnifier._isManualPanning)
+		self.assertEqual(
+			self.magnifier.currentCoordinates,
+			self.magnifier._clampCoordinates(movedCoordinates),
+		)
 
 	def testComputeMagnifiedViewCenterRaisesNotImplemented(self):
 		"""Base _computeMagnifiedViewCenter must raise NotImplementedError."""

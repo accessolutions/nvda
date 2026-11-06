@@ -246,9 +246,11 @@ class Magnifier:
 		recoveryScheduled = False
 		try:
 			try:
-				self._managePanning()
+				# The focus manager reports changes since its previous call, so query it once per update.
+				focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
+				self._managePanning(focusCoordinates)
 				if not self._isManualPanning:
-					self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
+					self.currentCoordinates = focusCoordinates
 			except LocationUnavailableError:
 				# #20860: A tracking failure is not a magnification failure.
 				if _isDebug():
@@ -445,11 +447,12 @@ class Magnifier:
 
 		return (x, y) != (originalX, originalY)
 
-	def _managePanning(self) -> None:
+	def _managePanning(self, focusCoordinates: Coordinates) -> None:
 		"""
 		Ensure that manual panning mode (self._isManualPanning) is set to False when focus coordinates change.
+
+		:param focusCoordinates: The coordinates reported by the focus manager for this update.
 		"""
-		focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		if self._isManualPanning:  # noqa: SIM102
 			if focusCoordinates != self._lastFocusCoordinates:
 				self._isManualPanning = False
