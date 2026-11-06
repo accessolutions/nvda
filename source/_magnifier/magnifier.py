@@ -9,7 +9,6 @@ Implements the magnifier global class and its basic functionalities.
 """
 
 import dataclasses
-from collections.abc import Callable
 
 import mouseHandler
 import screenCurtain
@@ -59,7 +58,8 @@ class Magnifier:
 		self._isActive: bool = False
 		self._zoomLevel: float = getZoomLevel()
 		self._panStep: int = getPanStep()
-		self._timer: None | wx.Timer = None
+		self._timer = wx.Timer()
+		self._timer.Bind(wx.EVT_TIMER, self._onTimer)
 		self._focusManager = FocusManager()
 		self._lastScreenPosition = Coordinates(0, 0)
 		self._currentCoordinates = Coordinates(0, 0)
@@ -299,7 +299,7 @@ class Magnifier:
 		finally:
 			# Always reschedule the timer to keep the magnifier alive, even after an unexpected error.
 			if self._isActive and not recoveryScheduled:
-				self._startTimer(self._updateMagnifier)
+				self._startTimer()
 
 	def _doUpdate(self) -> None:
 		"""
@@ -317,7 +317,7 @@ class Magnifier:
 		if _isDebug():
 			log.debug("Attempting base magnifier recovery")
 		self._consecutiveErrors = 0
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	def _onMouseMove(self, x: int, y: int) -> None:
 		"""
@@ -489,28 +489,20 @@ class Magnifier:
 		"""
 		raise NotImplementedError("Subclasses must implement this method")
 
-	def _startTimer(self, callback: Callable[[], None] = None) -> None:  # noqa: RUF013
-		"""
-		Start the timer with a callback function
+	def _onTimer(self, evt: wx.TimerEvent) -> None:
+		self._updateMagnifier()
 
-		:param callback: The function to call when the timer expires
+	def _startTimer(self) -> None:
 		"""
-		self._stopTimer()
-		self._timer = wx.Timer()
-		self._timer.Bind(wx.EVT_TIMER, lambda evt: callback())
-		self._timer.Start(self._TIMER_INTERVAL_MS, oneShot=True)
+		Schedule the next update, replacing any update already scheduled.
+		"""
+		self._timer.StartOnce(self._TIMER_INTERVAL_MS)
 
 	def _stopTimer(self) -> None:
 		"""
-		Stop timer execution
+		Cancel the scheduled update, if any.
 		"""
-		if self._timer:
-			if self._timer.IsRunning():
-				self._timer.Stop()
-			self._timer = None
-		else:
-			if _isDebug():
-				log.debug("no timer to stop")
+		self._timer.Stop()
 
 	def _getMagnifierParameters(self, coordinates: Coordinates) -> MagnifierParameters:
 		"""
