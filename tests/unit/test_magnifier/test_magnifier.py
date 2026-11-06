@@ -8,7 +8,7 @@ from _magnifier.magnifier import Magnifier
 from _magnifier.utils.errorHandling import MagnifierStartError
 from _magnifier.utils.types import Filter, Direction, Coordinates, MagnifierAction
 from comtypes import COMError
-from exceptions import LocationUnavailableError
+from exceptions import CallCancelled, LocationUnavailableError
 import unittest
 from winAPI._displayTracking import getPrimaryDisplayOrientation
 from unittest.mock import MagicMock, patch
@@ -232,7 +232,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
 
 	def testUpdateMagnifierDoesNotCountTrackingErrors(self) -> None:
-		"""#20860: Only Magnification API errors trigger recovery; the timer keeps running after other errors."""
+		"""#20860: Only Magnification API errors trigger recovery; the view is updated after other errors."""
 		self.magnifier._isActive = True
 		self.magnifier._consecutiveErrors = Magnifier._MAX_CONSECUTIVE_ERRORS - 1
 		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
@@ -242,11 +242,70 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._startTimer = MagicMock()
 		self.magnifier._attemptRecovery = MagicMock()
 
-		with self.assertRaises(COMError):
+		with patch("_magnifier.magnifier.log"):
 			self.magnifier._updateMagnifier()
 
 		self.magnifier._attemptRecovery.assert_not_called()
-		self.assertEqual(self.magnifier._consecutiveErrors, Magnifier._MAX_CONSECUTIVE_ERRORS - 1)
+		self.magnifier._doUpdate.assert_called_once()
+		self.assertEqual(self.magnifier._consecutiveErrors, 0)
+		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+
+	def testUpdateMagnifierKeepsViewOnUnexpectedTrackingError(self) -> None:
+		"""An unexpected tracking error keeps the view, still updates it, and reschedules the timer."""
+		self.magnifier._isActive = True
+		self.magnifier.currentCoordinates = self.focusCoords
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(side_effect=ValueError())
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		with patch("_magnifier.magnifier.log"):
+			self.magnifier._updateMagnifier()
+
+		self.assertEqual(self.magnifier.currentCoordinates, self.focusCoords)
+		self.magnifier._doUpdate.assert_called_once()
+		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+
+	def testUpdateMagnifierLogsUnexpectedTrackingErrorOncePerRun(self) -> None:
+		"""Unexpected tracking errors are logged once per failure run, and again after tracking succeeded."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		getCoordinates = self.magnifier._focusManager.getCurrentFocusCoordinates
+		with patch("_magnifier.magnifier.log") as mockLog:
+			getCoordinates.side_effect = ValueError()
+			for _ in range(5):
+				self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 1)
+
+			getCoordinates.side_effect = None
+			self.magnifier._updateMagnifier()
+			getCoordinates.side_effect = TypeError()
+			self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 2)
+
+	def testUpdateMagnifierUnavailableTrackingDoesNotResetErrorLog(self) -> None:
+		"""An unavailable tracked location is not a success: it does not re-arm the unexpected error log."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		getCoordinates = self.magnifier._focusManager.getCurrentFocusCoordinates
+		with patch("_magnifier.magnifier.log") as mockLog:
+			for error in (ValueError(), LocationUnavailableError(), ValueError()):
+				getCoordinates.side_effect = error
+				self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 1)
+
+	def testUpdateMagnifierPropagatesCallCancelled(self) -> None:
+		"""A cancelled call is not contained, but the timer is still rescheduled."""
+		self.magnifier._isActive = True
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(side_effect=CallCancelled())
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		with self.assertRaises(CallCancelled):
+			self.magnifier._updateMagnifier()
+
+		self.assertFalse(self.magnifier._isTrackingErrorLogged)
 		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
 
 	def testUpdateMagnifierRecoveryFailureSafelyRestartsTimer(self):
