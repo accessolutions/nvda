@@ -8,6 +8,7 @@
 import unittest
 from unittest.mock import Mock
 
+import IAccessibleHandler  # noqa: F401  # Break the NVDAObjects.IAccessible circular import.
 import textInfos
 from comtypes import COMError
 from NVDAObjects.IAccessible.MSHTML import MSHTMLTextInfo
