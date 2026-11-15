@@ -328,7 +328,7 @@ def resetConfiguration(factoryDefaults=False):
 	import textUtils._wordSeg
 	import _magnifier as magnifier
 
-	magnifier.terminate()
+	magnifier._suspendForConfigReset()
 	log.debug("Terminating vision")
 	vision.terminate()
 	log.debug("Terminating Screen Curtain")
@@ -405,7 +405,7 @@ def resetConfiguration(factoryDefaults=False):
 	vision.initialize()
 	log.debug("initializing Screen Curtain")
 	screenCurtain.initialize()
-	magnifier.initialize()
+	magnifier._resumeAfterConfigReset()
 	log.debug("Reloading user and locale input gesture maps")
 	inputCore.manager.loadUserGestureMap()
 	inputCore.manager.loadLocaleGestureMap()
