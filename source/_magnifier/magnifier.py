@@ -437,7 +437,7 @@ class Magnifier:
 		if self._mouseHook:
 			self._mouseHook.stop()
 			self._mouseHook = None
-		self._isTimerSuspended = self._timer is not None
+		self._isTimerSuspended = self._timer.IsRunning()
 		self._stopTimer()
 		return True
 
@@ -446,7 +446,7 @@ class Magnifier:
 		self._mouseHook = MagnifierMouseHook(self._onMouseMove)
 		self._mouseHook.start()
 		if self._isTimerSuspended:
-			self._startTimer(self._updateMagnifier)
+			self._startTimer()
 
 	def _applyConfig(self) -> None:
 		"""Apply the current configuration in place, keeping the view position."""
