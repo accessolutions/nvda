@@ -28,6 +28,8 @@ class SpotlightManager:
 	):
 		self._fullscreenMagnifier: FullScreenMagnifier = fullscreenMagnifier
 		self._spotlightIsActive: bool = False
+		self._isZoomingBack: bool = False
+		"""Whether the overview is animating back to the original zoom level."""
 		self._lastMousePosition = Coordinates(0, 0)
 		self._timer: wx.CallLater | None = None
 		self._animationTimer: wx.CallLater | None = None
@@ -48,6 +50,7 @@ class SpotlightManager:
 		log.debug("start spotlight")
 
 		self._spotlightIsActive = True
+		self._isZoomingBack = False
 
 		startCoords = self._fullscreenMagnifier._focusManager.getCurrentFocusCoordinates()
 		startCoords = self._fullscreenMagnifier._getCoordinatesForMode(startCoords)
@@ -78,8 +81,17 @@ class SpotlightManager:
 			self._timer = None
 
 		self._spotlightIsActive = False
+		self._isZoomingBack = False
 		self._fullscreenMagnifier._setZoomRawValue(self._originalZoomLevel)
 		self._fullscreenMagnifier._stopSpotlight()
+
+	def _stopTimers(self) -> None:
+		"""Stop the pending animation step and mouse monitoring, if any."""
+		for timer in (self._animationTimer, self._timer):
+			if timer:
+				timer.Stop()
+		self._animationTimer = None
+		self._timer = None
 
 	def cancel(self) -> None:
 		"""
@@ -89,13 +101,21 @@ class SpotlightManager:
 		if not self._spotlightIsActive:
 			return
 		log.debug("cancel spotlight")
-		for timer in (self._animationTimer, self._timer):
-			if timer:
-				timer.Stop()
-		self._animationTimer = None
-		self._timer = None
+		self._stopTimers()
 		self._spotlightIsActive = False
+		self._isZoomingBack = False
 		self._fullscreenMagnifier._setZoomRawValue(self._originalZoomLevel)
+
+	def end(self) -> None:
+		"""
+		Zoom back now, as when the mouse has been idle, from wherever the overview is.
+		Does nothing if the overview is not active, or is already zooming back.
+		"""
+		if not self._spotlightIsActive or self._isZoomingBack:
+			return
+		log.debug("end spotlight")
+		self._stopTimers()
+		self.zoomBack()
 
 	def _animateZoom(
 		self,
@@ -183,6 +203,7 @@ class SpotlightManager:
 		"""
 		Zoom back to mouse position
 		"""
+		self._isZoomingBack = True
 		if _isDebug():
 			log.debug(
 				f"zoom back with original zoom level {self._originalZoomLevel} and current zoom level {self._currentZoomLevel}",

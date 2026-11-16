@@ -323,14 +323,9 @@ def startSpotlight() -> None:
 				log.debug("trying to launch spotlight mode")
 			if fullscreenMagnifier._spotlightManager._spotlightIsActive:
 				if _isDebug():
-					log.debug("found spotlight manager and it is active")
-				ui.message(
-					pgettext(
-						"magnifier",
-						# Translators: Message announced when trying to show temporary overview of the screen while it's already active.
-						"The screen overview is already active",
-					),
-				)
+					log.debug("found spotlight manager and it is active, ending it")
+				# The zoom-back is the feedback; "Back to normal view" follows when it completes.
+				fullscreenMagnifier._spotlightManager.end()
 			else:
 				if _isDebug():
 					log.debug("no active spotlight manager found, starting new one")
