@@ -8,7 +8,8 @@ Magnifier module.
 Implements the magnifier global class and its basic functionalities.
 """
 
-import time  # noqa: I001
+import dataclasses  # noqa: I001
+import time
 from comtypes import COMError
 from exceptions import CallCancelled, LocationUnavailableError
 from logHandler import log
@@ -179,7 +180,9 @@ class Magnifier:
 		Called when display configuration changes
 		"""
 		log.debug("Display configuration changed, updating screen dimensions")
-		self.orientationState = orientationState
+		# The notifier passes a shared state object that it mutates in place.
+		self._displayOrientation = dataclasses.replace(orientationState)
+		self.currentCoordinates = self.currentCoordinates
 
 	def _isBlockedByScreenCurtain(self) -> bool:
 		"""
