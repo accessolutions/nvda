@@ -58,7 +58,7 @@ class TestConfigReload(_TestMagnifier):
 		_magnifier._suspendForConfigReset()
 		self.assertIs(_magnifier._magnifier, self.fullscreen)
 		self.assertTrue(self.fullscreen._isActive)
-		self.assertIsNone(self.fullscreen._timer)
+		self.assertFalse(self.fullscreen._timer.IsRunning())
 		self.mock_hook_instance.stop.assert_called_once()
 		self.mock_mag_fs.MagUninitialize.assert_not_called()
 		self.mock_mag_fs.MagSetFullscreenColorEffect.assert_not_called()
@@ -120,11 +120,17 @@ class TestConfigReload(_TestMagnifier):
 			_magnifier._resumeAfterConfigReset()
 		mockInitialize.assert_called_once()
 
-	def test_suspend_duringScreenOverview_terminates(self):
+	def test_reload_duringScreenOverview_endsItAndKeepsTheMagnifier(self):
+		# The overview stops the update timer while it animates.
+		self.fullscreen._stopTimer()
 		self.fullscreen._spotlightManager._spotlightIsActive = True
-		_magnifier._suspendForConfigReset()
-		self.assertIsNone(_magnifier._magnifier)
-		self.assertFalse(self.fullscreen._isActive)
+		self.fullscreen._spotlightManager._originalZoomLevel = 200
+		self._reload()
+		self.assertIs(_magnifier._magnifier, self.fullscreen)
+		self.assertTrue(self.fullscreen._isActive)
+		self.assertFalse(self.fullscreen._spotlightManager._spotlightIsActive)
+		self.mock_mag_fs.MagUninitialize.assert_not_called()
+		self.assertTrue(self.fullscreen._timer.IsRunning())
 
 	def test_resume_afterStoppedByCurtain_waitsWithTheReloadedSettings(self):
 		self._mockScreenCurtain(enabled=True)

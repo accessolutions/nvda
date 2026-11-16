@@ -32,9 +32,7 @@ class _TestScreenOverview(_TestMagnifier):
 		self.spotlight = self.fullscreen._spotlightManager
 
 	def tearDown(self):
-		if self.fullscreen._timer:
-			self.fullscreen._timer.Stop()
-			self.fullscreen._timer = None
+		self.fullscreen._stopTimer()
 		self.fullscreen._isActive = False
 		super().tearDown()
 
@@ -101,7 +99,7 @@ class TestStopDuringOverview(_TestScreenOverview):
 		idleTimer.Stop.assert_called_once()
 		self.assertFalse(self.spotlight._spotlightIsActive)
 		self.mockUiMessage.assert_not_called()
-		self.assertIsNone(self.fullscreen._timer)
+		self.assertFalse(self.fullscreen._timer.IsRunning())
 
 	def test_stopDuringOverview_restoresTheZoomLevel(self):
 		self._startDuringHold()
@@ -142,7 +140,7 @@ class TestSecureScreenDuringOverview(_TestScreenOverview):
 		stepTimer.Stop.assert_called_once()
 		self.assertFalse(self.spotlight._spotlightIsActive)
 		self.assertEqual(self.fullscreen.zoomLevel, 300)
-		self.assertIsNone(self.fullscreen._timer)
+		self.assertFalse(self.fullscreen._timer.IsRunning())
 		self.fullscreen._fullscreenMagnifier.assert_not_called()
 		self.mockUiMessage.assert_not_called()
 

@@ -238,6 +238,8 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 			magnifier = FullScreenMagnifier()
 		magnifier._consecutiveErrors = 3
 		magnifier._startTimer = MagicMock()
+		# Recovery only runs while active, and the filter is not applied otherwise.
+		magnifier._isActive = True
 
 		self.mock_mag_fs.reset_mock()
 		magnifier._attemptRecovery()
@@ -314,6 +316,8 @@ class TestRecoveryFlashLimiter(_TestMagnifier):
 			self.fsMagnifier = FullScreenMagnifier()
 		self.fsMagnifier.filterType = Filter.INVERTED
 		self.fsMagnifier._startTimer = MagicMock()
+		# Recovery only runs while active, and the filter is not applied otherwise.
+		self.fsMagnifier._isActive = True
 		self.mock_mag_fs.reset_mock()
 
 	def _invertedFilterCalls(self) -> int:
