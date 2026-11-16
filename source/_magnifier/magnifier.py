@@ -8,42 +8,44 @@ Magnifier module.
 Implements the magnifier global class and its basic functionalities.
 """
 
-import dataclasses  # noqa: I001
+import dataclasses
 import time
+
+import mouseHandler
+import screenCurtain
+import ui
+import winUser
+import wx
 from comtypes import COMError
 from exceptions import CallCancelled, LocationUnavailableError
 from logHandler import log
 from NVDAState import _TrackNVDAInitialization
-import wx
-import ui
-import screenCurtain
-import mouseHandler
-import winUser
 from winAPI import _displayTracking
 from winAPI._displayTracking import OrientationState, getPrimaryDisplayOrientation
-from .utils.types import (
-	MagnifierParameters,
-	MagnifierAction,
-	MagnifiedView,
-	MagnifierTrackingType,
-	Direction,
-	Filter,
-	Coordinates,
-)
+
 from .config import (
-	getFollowState,
-	getZoomLevel,
-	getPanStep,
-	getFilter,
-	isTrueCentered,
-	setZoomLevel,
-	setEnabled,
 	ZoomLevel,
 	_isDebug,
+	getFilter,
+	getFollowState,
+	getPanStep,
+	getZoomLevel,
+	isTrueCentered,
+	setEnabled,
+	setZoomLevel,
 )
-from .utils.focusManager import FocusManager
 from .utils.errorHandling import MagnifierStartError
+from .utils.focusManager import FocusManager
 from .utils.mouseHook import MagnifierMouseHook
+from .utils.types import (
+	Coordinates,
+	Direction,
+	Filter,
+	MagnifiedView,
+	MagnifierAction,
+	MagnifierParameters,
+	MagnifierTrackingType,
+)
 
 
 class Magnifier:
