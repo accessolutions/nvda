@@ -109,10 +109,14 @@ class FullScreenMagnifier(Magnifier):
 
 	@override
 	def _suspend(self) -> bool:
-		# The screen overview animates on its own timers.
-		if self._spotlightManager._spotlightIsActive:
-			return False
-		return super()._suspend()
+		# The screen overview animates on its own timers: end it, so it cannot move the view during the reload.
+		# It had stopped the update timer, so updates must resume after the reload.
+		wasOverviewActive = self._spotlightManager._spotlightIsActive
+		self._spotlightManager.cancel()
+		isSuspended = super()._suspend()
+		if wasOverviewActive:
+			self._isTimerSuspended = True
+		return isSuspended
 
 	@override
 	def _applyConfig(self) -> None:
@@ -432,7 +436,7 @@ class FullScreenMagnifier(Magnifier):
 		"""
 		if self._spotlightManager._spotlightIsActive:
 			self._spotlightManager.cancel()
-			self._startTimer(self._updateMagnifier)
+			self._startTimer()
 		super()._zoom(direction)
 
 	@override
