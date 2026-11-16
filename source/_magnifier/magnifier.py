@@ -75,8 +75,6 @@ class Magnifier:
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
 		self._mouseUpdatePending: bool = False
-		# Register for display changes
-		_displayTracking.displayChanged.register(self._onDisplayChanged)
 		self._screenCurtainIsActive: bool = False
 
 	@property
@@ -221,6 +219,9 @@ class Magnifier:
 			return
 		self._isActive = True
 		self._reportTrackingFailure(isFailed=False)
+		# The display may have changed while the magnifier was stopped.
+		self._displayOrientation = getPrimaryDisplayOrientation()
+		_displayTracking.displayChanged.register(self._onDisplayChanged)
 		try:
 			self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		except (COMError, LookupError, OSError, RuntimeError):
