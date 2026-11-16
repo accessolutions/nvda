@@ -9,7 +9,10 @@ from _magnifier.magnifier import Magnifier
 from _magnifier.utils.types import Filter, FullScreenMode, MagnifiedView, Direction, Coordinates
 from _magnifier.fullscreenMagnifier import FullScreenMagnifier
 from _magnifier.utils.errorHandling import MagnifierStartError
+from _magnifier.utils.filterHandler import FilterMatrix
 from tests.unit.test_magnifier.test_magnifier import _TestMagnifier
+from tests.unit.test_util.test_debounce import _FakeCallLater, _FakeClock
+from utils.debounce import PREVENT_THREE_HZ_FLASH_MS
 from winAPI._displayTracking import getPrimaryDisplayOrientation
 
 
@@ -235,6 +238,8 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 			magnifier = FullScreenMagnifier()
 		magnifier._consecutiveErrors = 3
 		magnifier._startTimer = MagicMock()
+		# Recovery only runs while active, and the filter is not applied otherwise.
+		magnifier._isActive = True
 
 		self.mock_mag_fs.reset_mock()
 		magnifier._attemptRecovery()
@@ -244,10 +249,10 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 		# MagInitialize: once in _clearStaleApiState + once for the real init
 		self.assertEqual(self.mock_mag_fs.MagInitialize.call_count, 2)
 		self.mock_mag_fs.MagSetFullscreenTransform.assert_called_once_with(magnifier.zoomLevel / 100.0, 0, 0)
-		# MagSetFullscreenColorEffect: once in _clearStaleApiState + once in _attemptRecovery
+		# MagSetFullscreenColorEffect: once in _clearStaleApiState + once in _applyFilter
 		self.assertEqual(self.mock_mag_fs.MagSetFullscreenColorEffect.call_count, 2)
 		self.assertEqual(magnifier._consecutiveErrors, 0)
-		magnifier._startTimer.assert_called_once_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_once_with()
 
 		magnifier._stopMagnifier()
 
@@ -280,15 +285,89 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 		# First update — error
 		magnifier._updateMagnifier()
 		self.assertEqual(magnifier._consecutiveErrors, 1)
-		magnifier._startTimer.assert_called_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_with()
 
 		# Second update — success
 		magnifier._startTimer.reset_mock()
 		magnifier._updateMagnifier()
 		self.assertEqual(magnifier._consecutiveErrors, 0)
-		magnifier._startTimer.assert_called_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_with()
 
 		magnifier._stopMagnifier()
+
+
+class TestRecoveryFlashLimiter(_TestMagnifier):
+	"""Recovery restores the colour filter through the real flash limiter."""
+
+	def setUp(self):
+		super().setUp()
+		self.clock = _FakeClock()
+		self.callLater = _FakeCallLater()
+		for patcher in (
+			patch("utils.debounce.monotonic", new=self.clock.monotonic),
+			patch("utils.debounce.wx.CallLater", new=self.callLater),
+		):
+			patcher.start()
+			self.addCleanup(patcher.stop)
+		with patch(
+			"_magnifier.magnifier.FocusManager.getCurrentFocusCoordinates",
+			return_value=Coordinates(0, 0),
+		):
+			self.fsMagnifier = FullScreenMagnifier()
+		self.fsMagnifier.filterType = Filter.INVERTED
+		self.fsMagnifier._startTimer = MagicMock()
+		# Recovery only runs while active, and the filter is not applied otherwise.
+		self.fsMagnifier._isActive = True
+		self.mock_mag_fs.reset_mock()
+
+	def _invertedFilterCalls(self) -> int:
+		return sum(
+			1
+			for call in self.mock_mag_fs.MagSetFullscreenColorEffect.call_args_list
+			if call.args[0] is FilterMatrix.INVERTED.value
+		)
+
+	def testRecoveryRestoresFilter(self):
+		self.fsMagnifier._attemptRecovery()
+
+		self.mock_mag_fs.MagSetFullscreenColorEffect.assert_called_with(FilterMatrix.INVERTED.value)
+		self.assertEqual(self.callLater.handles, [])
+
+	def testRecoveryWithinCooldownIsDeferred(self):
+		self.fsMagnifier._applyFilter()
+		self.mock_mag_fs.reset_mock()
+		self.clock.now = 0.05
+
+		self.fsMagnifier._attemptRecovery()
+
+		self.assertEqual(len(self.callLater.handles), 1)
+		self.assertEqual(self.callLater.handles[0].delay, PREVENT_THREE_HZ_FLASH_MS)
+		self.assertEqual(self._invertedFilterCalls(), 0)
+		self.callLater.runPending()
+		self.assertEqual(self._invertedFilterCalls(), 1)
+
+	def testRecoveryStartsCooldown(self):
+		self.fsMagnifier._attemptRecovery()
+		self.clock.now = 0.05
+
+		self.fsMagnifier._applyFilter()
+
+		self.assertEqual(len(self.callLater.handles), 1)
+
+	def testFilterFailureDoesNotStopMagnifier(self):
+		def colorEffect(matrix):
+			if matrix is FilterMatrix.INVERTED.value:
+				raise OSError("injected")
+			return True
+
+		self.mock_mag_fs.MagSetFullscreenColorEffect.side_effect = colorEffect
+		self.fsMagnifier._conductRecoveryFailure = MagicMock()
+
+		self.fsMagnifier._attemptRecovery()
+
+		self.fsMagnifier._conductRecoveryFailure.assert_not_called()
+		self.fsMagnifier._startTimer.assert_called_once_with()
+		self.assertEqual(self.fsMagnifier._consecutiveErrors, 0)
 
 
 class TestFullScreenMagnifierApi(_TestMagnifier):
@@ -357,7 +436,7 @@ class TestFullScreenMagnifierApi(_TestMagnifier):
 			magnifier._startMagnifier()
 
 		self.assertFalse(magnifier._isActive)
-		self.assertIsNone(magnifier._timer)
+		self.assertFalse(magnifier._timer.IsRunning())
 
 	def testCannotStartWhenMagInitializeFails(self):
 		"""
@@ -370,7 +449,7 @@ class TestFullScreenMagnifierApi(_TestMagnifier):
 			magnifier._startMagnifier()
 
 		self.assertFalse(magnifier._isActive)
-		self.assertIsNone(magnifier._timer)
+		self.assertFalse(magnifier._timer.IsRunning())
 
 	def testRecoveryCapStopsMagnifier(self):
 		"""After _MAX_RECOVERY_ATTEMPTS failed attempts, the magnifier stops and the user is notified."""

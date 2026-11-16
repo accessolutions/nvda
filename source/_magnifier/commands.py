@@ -77,8 +77,8 @@ PAN_ACTION_TO_EDGE_MESSAGES = {
 	),
 	MagnifierAction.PAN_BOTTOM_EDGE: pgettext(
 		"magnifier",
-		# Translators: Message announced when already at left edge of the screen while panning the magnified view
-		# to left edge
+		# Translators: Message announced when already at bottom edge of the screen while panning the magnified view
+		# to bottom edge
 		"bottom edge",
 	),
 }
@@ -180,11 +180,8 @@ def toggleFilter() -> None:
 	):
 		filters = list(Filter)
 		idx = filters.index(magnifier.filterType)
+		# The filterType setter applies the filter, and this command only runs while active.
 		magnifier.filterType = filters[(idx + 1) % len(filters)]
-		if magnifier._MAGNIFIED_VIEW == MagnifiedView.FULLSCREEN:
-			assert isinstance(magnifier, FullScreenMagnifier)
-			fullscreenMagnifier: FullScreenMagnifier = magnifier
-			fullscreenMagnifier._applyFilter()
 		setFilter(magnifier.filterType)
 
 		ui.message(
@@ -280,7 +277,7 @@ def toggleAllFollow() -> None:
 
 
 def toggleFullscreenMode() -> None:
-	"""Cycle through full-screen modes (center, border, relative)"""
+	"""Cycle through full-screen modes (center, relative)"""
 	magnifier: Magnifier = getMagnifier()
 	if magnifierIsActiveVerify(  # noqa: SIM102
 		magnifier,
@@ -323,14 +320,9 @@ def startSpotlight() -> None:
 				log.debug("trying to launch spotlight mode")
 			if fullscreenMagnifier._spotlightManager._spotlightIsActive:
 				if _isDebug():
-					log.debug("found spotlight manager and it is active")
-				ui.message(
-					pgettext(
-						"magnifier",
-						# Translators: Message announced when trying to show temporary overview of the screen while it's already active.
-						"The screen overview is already active",
-					),
-				)
+					log.debug("found spotlight manager and it is active, ending it")
+				# The zoom-back is the feedback; "Back to normal view" follows when it completes.
+				fullscreenMagnifier._spotlightManager.end()
 			else:
 				if _isDebug():
 					log.debug("no active spotlight manager found, starting new one")

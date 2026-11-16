@@ -1621,9 +1621,11 @@ You can enable Screen Curtain in the [Privacy and Security category](#PrivacyAnd
 
 <!-- KC:endInclude -->
 
-When Screen Curtain is enabled, features that rely on what is literally on screen will not function.
-For example, you cannot [use OCR](#Win10Ocr).
-Some screenshot utilities also may not work.
+When Screen Curtain is enabled, some features that rely on what is literally on screen will not function.
+On supported systems, [Windows OCR](#Win10Ocr) can still be used while Screen Curtain is enabled.
+Some screenshot utilities may not work.
+NVDA's [Magnifier](#Magnifier) is turned off while Screen Curtain is enabled, and is turned back on when Screen Curtain is disabled.
+Since the screen is black, this is not announced.
 
 Please note that while Windows Magnifier is running and inverted screen colors are being used, Screen Curtain cannot be enabled.
 
@@ -1634,6 +1636,8 @@ This feature is particularly useful for users with low vision who need to enlarg
 
 The NVDA Magnifier operates as a full-screen magnifier, meaning it enlarges the entire screen while following the system focus or mouse pointer.
 It provides several configuration options to customize the magnification experience according to your needs.
+When running a portable or temporary copy of NVDA, mouse and touch input is inaccurate while the Magnifier is enabled.
+See [Portable and Temporary Copy Restrictions](#PortableAndTemporaryCopyRestrictions).
 
 ### Enabling and Disabling the Magnifier {#MagnifierToggle}
 
@@ -1641,6 +1645,7 @@ To enable or disable the magnifier, press `NVDA+shift+w`.
 The "Increase magnification level" keystroke, `NVDA+shift+equals`, will start the magnifier if it is not running.
 When disabled, the screen returns to its normal size.
 As with other NVDA settings, the Magnifier state is preserved across sessions.
+The Magnifier is turned off while [Screen Curtain](#VisionScreenCurtain) is enabled, and is turned back on when Screen Curtain is disabled.
 
 ### Magnifier Commands {#MagnifierCommands}
 
@@ -1651,7 +1656,7 @@ Once the magnifier is enabled, you can use the following keyboard commands to co
 | Name | Key | Description |
 |---|---|---|
 | Toggle the magnifier on and off | `NVDA+shift+w` | Enables or disables the magnifier |
-| Increase the magnification level | `NVDA+shift+equals` | Increases the zoom level. Starts the magnifier if it's not already running. |
+| Increase the magnification level, or start the magnifier | `NVDA+shift+equals` | Increases the zoom level. Starts the magnifier if it's not already running. |
 | Decrease the magnification level | `NVDA+shift+minus` | Decreases the zoom level |
 | Cycle color filters | `NVDA+shift+i` | Cycles through the available color filters (normal, grayscale, inverted) |
 | Cycle tracking mode | None | Cycles through tracking modes (center, relative) |
@@ -1694,6 +1699,9 @@ This mode keeps the tracked element at the center of the screen and clamps to th
 
 To cycle through the tracking modes, please assign a custom gesture using the [Input Gestures dialog](#InputGestures).
 
+If the magnifier cannot locate what it is following, for example because an application is not responding, the magnified area stays where it is.
+When this lasts for more than a second, NVDA announces "Magnifier tracking unavailable" once.
+
 ### Show entire screen overview {#MagnifierScreenOverview}
 
 The magnifier can temporarily display an overview of the entire screen, making it useful for presentations or when you need to quickly understand the overall screen layout.
@@ -1711,6 +1719,7 @@ The magnifier will then:
 1. When the mouse remains still for approximately 2 seconds, automatically zoom back in to the original zoom level at the new mouse position
 
 Moving the mouse before the zoom-back occurs gives you more time to view the full screen.
+To return to the original zoom level before then, press `NVDA+shift+l` again.
 
 ### Magnifier Settings {#MagnifierSettings}
 
@@ -3003,7 +3012,8 @@ When enabled, the magnified area will automatically move to follow the mouse poi
 ##### Follow system focus {#MagnifierFollowSystemFocus}
 
 This checkbox controls whether the magnifier should follow the system focus.
-When enabled, the magnified area will automatically move to follow the system focus, which can be helpful for users who navigate primarily using the keyboard and want the magnifier to track their navigation.
+When enabled, the magnified area will automatically move to follow the system focus and the system text cursor, which can be helpful for users who navigate primarily using the keyboard and want the magnifier to track their navigation.
+It also moves to follow the browse mode cursor in browse mode.
 
 | . {.hideHeaderRow} |.|
 |---|---|

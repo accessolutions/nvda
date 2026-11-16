@@ -10,6 +10,7 @@ Manages the spotlight effect, including zooming in on focus and zooming back.
 
 from typing import TYPE_CHECKING  # noqa: I001
 from collections.abc import Callable
+from comtypes import COMError
 import ui
 from .types import Coordinates, ZoomHistory, FullScreenMode
 import wx
@@ -27,8 +28,11 @@ class SpotlightManager:
 	):
 		self._fullscreenMagnifier: FullScreenMagnifier = fullscreenMagnifier
 		self._spotlightIsActive: bool = False
+		self._isZoomingBack: bool = False
+		"""Whether the overview is animating back to the original zoom level."""
 		self._lastMousePosition = Coordinates(0, 0)
 		self._timer: wx.CallLater | None = None
+		self._animationTimer: wx.CallLater | None = None
 		self._animationSteps: int = 40
 		self._animationStepDelay: int = 12
 		self._currentCoordinates: Coordinates = fullscreenMagnifier._focusManager.getCurrentFocusCoordinates()
@@ -46,6 +50,7 @@ class SpotlightManager:
 		log.debug("start spotlight")
 
 		self._spotlightIsActive = True
+		self._isZoomingBack = False
 
 		startCoords = self._fullscreenMagnifier._focusManager.getCurrentFocusCoordinates()
 		startCoords = self._fullscreenMagnifier._getCoordinatesForMode(startCoords)
@@ -76,7 +81,41 @@ class SpotlightManager:
 			self._timer = None
 
 		self._spotlightIsActive = False
+		self._isZoomingBack = False
+		self._fullscreenMagnifier._setZoomRawValue(self._originalZoomLevel)
 		self._fullscreenMagnifier._stopSpotlight()
+
+	def _stopTimers(self) -> None:
+		"""Stop the pending animation step and mouse monitoring, if any."""
+		for timer in (self._animationTimer, self._timer):
+			if timer:
+				timer.Stop()
+		self._animationTimer = None
+		self._timer = None
+
+	def cancel(self) -> None:
+		"""
+		Leave the screen overview at once and silently, at the zoom level it started from.
+		Does nothing if the overview is not active.
+		"""
+		if not self._spotlightIsActive:
+			return
+		log.debug("cancel spotlight")
+		self._stopTimers()
+		self._spotlightIsActive = False
+		self._isZoomingBack = False
+		self._fullscreenMagnifier._setZoomRawValue(self._originalZoomLevel)
+
+	def end(self) -> None:
+		"""
+		Zoom back now, as when the mouse has been idle, from wherever the overview is.
+		Does nothing if the overview is not active, or is already zooming back.
+		"""
+		if not self._spotlightIsActive or self._isZoomingBack:
+			return
+		log.debug("end spotlight")
+		self._stopTimers()
+		self.zoomBack()
 
 	def _animateZoom(
 		self,
@@ -131,8 +170,12 @@ class SpotlightManager:
 				return
 			self._currentZoomLevel = zoomLevel
 			self._currentCoordinates = coords
-			wx.CallLater(self._animationStepDelay, lambda: self._executeStep(stepIndex + 1, callback))
+			self._animationTimer = wx.CallLater(
+				self._animationStepDelay,
+				lambda: self._executeStep(stepIndex + 1, callback),
+			)
 		else:
+			self._animationTimer = None
 			if callback:
 				callback()
 
@@ -160,12 +203,21 @@ class SpotlightManager:
 		"""
 		Zoom back to mouse position
 		"""
+		self._isZoomingBack = True
 		if _isDebug():
 			log.debug(
 				f"zoom back with original zoom level {self._originalZoomLevel} and current zoom level {self._currentZoomLevel}",
 			)
 
-		focus = self._fullscreenMagnifier._focusManager.getCurrentFocusCoordinates()
+		try:
+			focus = self._fullscreenMagnifier._focusManager.getCurrentFocusCoordinates()
+		except (COMError, LookupError, OSError, RuntimeError):
+			# Tracking reads UIA and COM; its failure must not leave the overview active.
+			log.warning(
+				"Could not determine where to return after the screen overview; using the last position",
+				exc_info=True,
+			)
+			focus = self._fullscreenMagnifier.currentCoordinates
 
 		if self._originalMode == FullScreenMode.RELATIVE:
 			savedZoom = self._fullscreenMagnifier.zoomLevel

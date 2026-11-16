@@ -1,5 +1,5 @@
 # A part of NonVisual Desktop Access (NVDA)
-# Copyright (C) 2014-2022 NV Access Limited
+# Copyright (C) 2014-2022 NV Access Limited, Cyrille Bougot
 # This file is covered by the GNU General Public License.
 # See the file COPYING for more details.
 
@@ -24,7 +24,9 @@ import ui
 import textInfos
 
 if typing.TYPE_CHECKING:
-	from speech.commands import SpeechCommand  # noqa F401: type-checking only
+	from locationHelper import RectLTRB
+	from NVDAObjects import NVDAObject
+	from speech.commands import SpeechCommand
 
 
 class MathPresentationProvider(object):
@@ -140,7 +142,11 @@ class MathInteractionNVDAObject(Window):
 	# Translators: Describes a command.
 	script_exit.__doc__ = _("Exit math interaction")
 
-	__gestures = {
+	def getMathSourceObjectRect(self) -> "RectLTRB | None":
+		"""Get the navigation rectangle for a supported web math source object."""
+		raise NotImplementedError
+
+	__gestures = {  # noqa: RUF012
 		"kb:escape": "exit",
 	}
 

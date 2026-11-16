@@ -15,7 +15,7 @@ import systemUtils
 import ui
 from logHandler import log
 from utils.debounce import PREVENT_THREE_HZ_FLASH_MS, debounceLimiter
-from winBindings import magnification
+from winBindings import magnification, user32
 
 from .config import _isDebug, getFullscreenMode, isTrueCentered
 from .magnifier import Magnifier
@@ -24,12 +24,24 @@ from .utils.filterHandler import FilterMatrix
 from .utils.spotlightManager import SpotlightManager
 from .utils.types import (
 	Coordinates,
+	Direction,
 	Filter,
 	FullScreenMode,
 	MagnifiedView,
 	MagnifierParameters,
 	Size,
 )
+
+_WINDOWS_MAGNIFIER_WINDOW_CLASS = "MagUIClass"
+"""Class of Windows Magnifier's main window, present whenever it runs."""
+
+
+def _getAnotherMagnifierRunningMessage() -> str:
+	return pgettext(
+		"magnifier",
+		# Translators: Message when NVDA's Magnifier cannot start because another magnifier is already running.
+		"Cannot start magnifier. Another magnifier application may already be running.",
+	)
 
 
 class FullScreenMagnifier(Magnifier):
@@ -46,13 +58,36 @@ class FullScreenMagnifier(Magnifier):
 		self._fullscreenMode = getFullscreenMode()
 		self.currentCoordinates = Coordinates(0, 0)
 		self._spotlightManager = SpotlightManager(self)
-		self._displaySize = Size(self._displayOrientation.width, self._displayOrientation.height)
 		self._inputTransformSupported = systemUtils.hasUiAccess()
+
+	def _onSecureDesktopChange(self, isSecureDesktop: bool) -> None:
+		"""Internal callback for secure desktop state changes.
+		:param isSecureDesktop: True if transitioning to secure desktop, False otherwise
+		"""
+		if isSecureDesktop:
+			# While secure desktop is active, the secure desktop masks the user's one, so updating magnification on
+			# the user's desktop is useless. But overall, calling magnification.MagSetInputTransform is not allowed
+			# and causes an error. Thus we disable magnifier update while secure desktop is active.
+			# The screen overview animates on its own timers, so end it as well.
+			self._spotlightManager.cancel()
+			self._stopTimer()
+		else:
+			self._startTimer()
 
 	@staticmethod
 	def _isAccessDeniedError(error: OSError) -> bool:
 		"""Return True when OSError represents Windows access denied (WinError 5)."""
 		return getattr(error, "winerror", None) == 5
+
+	@staticmethod
+	def _isWindowsMagnifierRunning() -> bool:
+		"""
+		Whether Windows Magnifier is running, whatever its view and zoom level.
+
+		At 100%, Windows Magnifier does not hold the full-screen transform, so the Magnification API
+		accepts ours and cannot be relied on to detect it.
+		"""
+		return bool(user32.FindWindow(_WINDOWS_MAGNIFIER_WINDOW_CLASS, None))
 
 	@Magnifier.filterType.setter
 	def filterType(self, value: Filter) -> None:
@@ -60,20 +95,15 @@ class FullScreenMagnifier(Magnifier):
 		if self._isActive:
 			self._applyFilter()
 
-	def event_gainFocus(
-		self,
-		obj,
-		nextHandler,
-	):
-		if _isDebug():
-			log.debug("Full-screen Magnifier gain focus event")
-		nextHandler()
-
 	@override
 	def _startMagnifier(self) -> None:
 		"""
 		Start the Full-screen magnifier using windows DLL
 		"""
+		if not self._isActive and self._isWindowsMagnifierRunning():
+			# Checked first, so that nothing touches the full-screen transform Windows Magnifier may own.
+			log.info("Not starting the magnifier: Windows Magnifier is running")
+			raise MagnifierStartError(_getAnotherMagnifierRunningMessage())
 		super()._startMagnifier()
 		if not self._isActive:
 			return
@@ -81,23 +111,41 @@ class FullScreenMagnifier(Magnifier):
 			log.debug(
 				f"Starting magnifier with zoom level {self.zoomLevel} and filter {self.filterType} and full-screen tracking mode {self._fullscreenMode}",
 			)
+		from winAPI.secureDesktop import post_secureDesktopStateChange
+
+		post_secureDesktopStateChange.register(self._onSecureDesktopChange)
 		try:
 			self._initializeNativeMagnification()
 		except OSError:
 			log.exception("Failed to initialize magnification API")
 			# _isActive is True from super(), so _stopMagnifier properly unregisters
 			self._stopMagnifier()
-			raise MagnifierStartError(
-				pgettext(
-					"magnifier",
-					# Translators: Message when NVDA's Magnifier cannot start because another magnifier is already running.
-					"Cannot start magnifier. Another magnifier application may already be running.",
-				),
-			)
+			raise MagnifierStartError(_getAnotherMagnifierRunningMessage())
 
 		if self._isActive:
 			self._applyFilter()
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
+
+	@override
+	def _suspend(self) -> bool:
+		# The screen overview animates on its own timers: end it, so it cannot move the view during the reload.
+		# It had stopped the update timer, so updates must resume after the reload.
+		wasOverviewActive = self._spotlightManager._spotlightIsActive
+		self._spotlightManager.cancel()
+		isSuspended = super()._suspend()
+		if wasOverviewActive:
+			self._isTimerSuspended = True
+		return isSuspended
+
+	@override
+	def _applyConfig(self) -> None:
+		newMode = getFullscreenMode()
+		if newMode != self._fullscreenMode:
+			# Panned coordinates place the view differently in another mode: follow the focus again,
+			# as after a restart.
+			self._isManualPanning = False
+			self._fullscreenMode = newMode
+		super()._applyConfig()
 
 	def _clearStaleApiState(self) -> None:
 		"""
@@ -160,9 +208,17 @@ class FullScreenMagnifier(Magnifier):
 		"""
 		Stop the Full-screen magnifier using windows DLL
 		"""
+		self._spotlightManager.cancel()
 		super()._stopMagnifier()
+		from winAPI.secureDesktop import post_secureDesktopStateChange
+
+		post_secureDesktopStateChange.unregister(self._onSecureDesktopChange)
 		self._resetMagnification()
 		self._uninitializeNativeMagnification()
+
+	@override
+	def _cancelPendingVisualUpdates(self) -> None:
+		self._applyFilter.cancel(self)
 
 	@trackNativeMagnifierErrors
 	def _resetMagnification(self) -> None:
@@ -222,15 +278,17 @@ class FullScreenMagnifier(Magnifier):
 			# _initializeNativeMagnification also probes MagSetFullscreenTransform,
 			# which is the call that fails when Windows Magnifier is running.
 			self._initializeNativeMagnification()
-			magnification.MagSetFullscreenColorEffect(self._getFilterMatrix().value)
 		except OSError:
 			log.error("Recovery failed", exc_info=True)  # noqa: G201
 			self._conductRecoveryFailure()
 			return
 
+		# Same path as start-up, so that recovery is subject to the flash limiter.
+		self._applyFilter()
+
 		self._consecutiveErrors = 0
 		log.debug("Full-screen magnifier recovery succeeded")
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	def _conductRecoveryFailure(self) -> None:
 		"""
@@ -267,6 +325,10 @@ class FullScreenMagnifier(Magnifier):
 
 		If an OSError occurs (native API failure), it is logged and execution continues.
 		"""
+		if not self._isActive:
+			# The limiter can defer this call past a stop, and whatever stopped us, typically the
+			# screen curtain, owns the full-screen color effect from then on.
+			return
 		magnification.MagSetFullscreenColorEffect(self._getFilterMatrix().value)
 
 	def _fullscreenMagnifier(self, coordinates: Coordinates) -> None:
@@ -383,7 +445,18 @@ class FullScreenMagnifier(Magnifier):
 		Stop and destroy Spotlight from Full-screen class
 		"""
 		self._spotlightManager._spotlightIsActive = False
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
+
+	@override
+	def _zoom(self, direction: Direction) -> None:
+		"""
+		Adjust the zoom level. During the screen overview, end it first, so the change applies to the
+		zoom level it started from rather than to an intermediate one.
+		"""
+		if self._spotlightManager._spotlightIsActive:
+			self._spotlightManager.cancel()
+			self._startTimer()
+		super()._zoom(direction)
 
 	@override
 	def _getMagnifierParameters(self, coordinates: Coordinates) -> MagnifierParameters:

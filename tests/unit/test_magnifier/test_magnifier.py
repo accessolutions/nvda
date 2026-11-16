@@ -8,6 +8,7 @@ from _magnifier.magnifier import Magnifier
 from _magnifier.utils.errorHandling import MagnifierStartError
 from _magnifier.utils.types import Filter, Direction, Coordinates, MagnifierAction
 from comtypes import COMError
+from exceptions import CallCancelled, LocationUnavailableError
 import unittest
 from winAPI._displayTracking import getPrimaryDisplayOrientation
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,13 @@ class _TestMagnifier(unittest.TestCase):
 		self.MockMouseHook = self.mouseHook_patcher.start()
 		self.mock_hook_instance = MagicMock()
 		self.MockMouseHook.return_value = self.mock_hook_instance
+		# Independent of whether Windows Magnifier runs on the test machine.
+		windowsMagnifierPatcher = patch(
+			"_magnifier.fullscreenMagnifier.FullScreenMagnifier._isWindowsMagnifierRunning",
+			return_value=False,
+		)
+		self.mockIsWindowsMagnifierRunning = windowsMagnifierPatcher.start()
+		self.addCleanup(windowsMagnifierPatcher.stop)
 
 		self.magnifier = Magnifier()
 		self.magnifier.zoomLevel = 200
@@ -50,9 +58,7 @@ class _TestMagnifier(unittest.TestCase):
 
 	def tearDown(self):
 		"""Cleanup after each test."""
-		if self.magnifier._timer:
-			self.magnifier._timer.Stop()
-			self.magnifier._timer = None
+		self.magnifier._timer.Stop()
 		if self.magnifier._isActive:
 			self.magnifier._isActive = False
 		self.mouseHook_patcher.stop()
@@ -146,15 +152,13 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._isActive = True
 		self.magnifier._updateMagnifier()
 
-		# getCurrentFocusCoordinates is called twice: once in _managePanning and once to update currentCoordinates
+		# The focus manager reports changes since its previous call, so it is queried once per update
 		self.assertEqual(
 			self.magnifier._focusManager.getCurrentFocusCoordinates.call_count,
-			2,
+			1,
 		)
 		self.magnifier._doUpdate.assert_called_once()
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier.currentCoordinates, focusCoords)
 		# Successful update should reset error counter
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
@@ -172,9 +176,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._updateMagnifier()
 
 		# Timer must still be rescheduled despite the error
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 1)
 
 	def testUpdateMagnifierTriggersRecoveryAfterMaxErrors(self):
@@ -208,8 +210,104 @@ class TestMagnifier(_TestMagnifier):
 
 		self.magnifier._updateMagnifier()
 
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 1)
+
+	def testUpdateMagnifierKeepsViewWhenTrackingUnavailable(self) -> None:
+		"""#20860: An unavailable tracked location keeps the current view without counting as an error."""
+		self.magnifier._isActive = True
+		self.magnifier.currentCoordinates = self.focusCoords
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=LocationUnavailableError(),
+		)
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._attemptRecovery = MagicMock()
+
+		self.magnifier._updateMagnifier()
+
+		self.assertEqual(self.magnifier.currentCoordinates, self.focusCoords)
+		self.magnifier._doUpdate.assert_called_once()
+		self.magnifier._attemptRecovery.assert_not_called()
+		self.assertEqual(self.magnifier._consecutiveErrors, 0)
+		self.magnifier._startTimer.assert_called_once_with()
+
+	def testUpdateMagnifierDoesNotCountTrackingErrors(self) -> None:
+		"""#20860: Only Magnification API errors trigger recovery; the view is updated after other errors."""
+		self.magnifier._isActive = True
+		self.magnifier._consecutiveErrors = Magnifier._MAX_CONSECUTIVE_ERRORS - 1
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(
+			side_effect=COMError(-2147467259, "Unspecified error", None),
+		)
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier._attemptRecovery = MagicMock()
+
+		with patch("_magnifier.magnifier.log"):
+			self.magnifier._updateMagnifier()
+
+		self.magnifier._attemptRecovery.assert_not_called()
+		self.magnifier._doUpdate.assert_called_once()
+		self.assertEqual(self.magnifier._consecutiveErrors, 0)
+		self.magnifier._startTimer.assert_called_once_with()
+
+	def testUpdateMagnifierKeepsViewOnUnexpectedTrackingError(self) -> None:
+		"""An unexpected tracking error keeps the view, still updates it, and reschedules the timer."""
+		self.magnifier._isActive = True
+		self.magnifier.currentCoordinates = self.focusCoords
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(side_effect=ValueError())
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		with patch("_magnifier.magnifier.log"):
+			self.magnifier._updateMagnifier()
+
+		self.assertEqual(self.magnifier.currentCoordinates, self.focusCoords)
+		self.magnifier._doUpdate.assert_called_once()
+		self.magnifier._startTimer.assert_called_once_with()
+
+	def testUpdateMagnifierLogsUnexpectedTrackingErrorOncePerRun(self) -> None:
+		"""Unexpected tracking errors are logged once per failure run, and again after tracking succeeded."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		getCoordinates = self.magnifier._focusManager.getCurrentFocusCoordinates
+		with patch("_magnifier.magnifier.log") as mockLog:
+			getCoordinates.side_effect = ValueError()
+			for _ in range(5):
+				self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 1)
+
+			getCoordinates.side_effect = None
+			self.magnifier._updateMagnifier()
+			getCoordinates.side_effect = TypeError()
+			self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 2)
+
+	def testUpdateMagnifierUnavailableTrackingDoesNotResetErrorLog(self) -> None:
+		"""An unavailable tracked location is not a success: it does not re-arm the unexpected error log."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		getCoordinates = self.magnifier._focusManager.getCurrentFocusCoordinates
+		with patch("_magnifier.magnifier.log") as mockLog:
+			for error in (ValueError(), LocationUnavailableError(), ValueError()):
+				getCoordinates.side_effect = error
+				self.magnifier._updateMagnifier()
+			self.assertEqual(mockLog.exception.call_count, 1)
+
+	def testUpdateMagnifierPropagatesCallCancelled(self) -> None:
+		"""A cancelled call is not contained, but the timer is still rescheduled."""
+		self.magnifier._isActive = True
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(side_effect=CallCancelled())
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+
+		with self.assertRaises(CallCancelled):
+			self.magnifier._updateMagnifier()
+
+		self.assertFalse(self.magnifier._isTrackingErrorLogged)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testUpdateMagnifierRecoveryFailureSafelyRestartsTimer(self):
 		"""If _attemptRecovery itself raises, the timer must still be restarted to prevent a freeze."""
@@ -226,7 +324,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._updateMagnifier()
 
 		# Timer must be restarted by the safety net even though recovery failed
-		self.magnifier._startTimer.assert_called_once_with(self.magnifier._updateMagnifier)
+		self.magnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
 
 	def testUpdateMagnifierResetsErrorCountOnSuccess(self):
@@ -253,9 +351,7 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._attemptRecovery()
 
 		self.assertEqual(self.magnifier._consecutiveErrors, 0)
-		self.magnifier._startTimer.assert_called_once_with(
-			self.magnifier._updateMagnifier,
-		)
+		self.magnifier._startTimer.assert_called_once_with()
 
 	def testDoUpdate(self):
 		"""DoUpdate function raises NotImplementedError."""
@@ -461,58 +557,100 @@ class TestMagnifier(_TestMagnifier):
 		focusA = Coordinates(100, 200)
 		focusB = Coordinates(300, 400)
 
-		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=focusA)
-
 		# When not panning, _lastFocusCoordinates is updated every cycle
 		self.magnifier._isManualPanning = False
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusA)
 		self.assertFalse(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusA)
 
 		# When panning starts and focus hasn't changed, panning continues
 		self.magnifier._isManualPanning = True
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusA)
 		self.assertTrue(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusA)
 
 		# When focus changes while panning, manual panning ends
-		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=focusB)
-		self.magnifier._managePanning()
+		self.magnifier._managePanning(focusB)
 		self.assertFalse(self.magnifier._isManualPanning)
 		self.assertEqual(self.magnifier._lastFocusCoordinates, focusB)
+
+	def testUpdateMagnifierQueriesTrackingOnceWhilePanning(self) -> None:
+		"""While manually panning, the focus manager is still queried once per update, and the view is kept."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		pannedCoordinates = self.magnifier._clampCoordinates(Coordinates(100, 200))
+		self.magnifier.currentCoordinates = pannedCoordinates
+		self.magnifier._isManualPanning = True
+		self.magnifier._lastFocusCoordinates = self.focusCoords
+
+		self.magnifier._updateMagnifier()
+
+		self.magnifier._focusManager.getCurrentFocusCoordinates.assert_called_once()
+		self.assertTrue(self.magnifier._isManualPanning)
+		self.assertEqual(self.magnifier.currentCoordinates, pannedCoordinates)
+
+	def testUpdateMagnifierEndsPanningWhenFocusMoves(self) -> None:
+		"""When the focus moves while panning, the view follows it within the same update."""
+		self.magnifier._isActive = True
+		self.magnifier._doUpdate = MagicMock()
+		self.magnifier._startTimer = MagicMock()
+		self.magnifier.currentCoordinates = self.magnifier._clampCoordinates(Coordinates(100, 200))
+		self.magnifier._isManualPanning = True
+		self.magnifier._lastFocusCoordinates = self.focusCoords
+		movedCoordinates = Coordinates(self.focusCoords.x + 10, self.focusCoords.y + 10)
+		self.magnifier._focusManager.getCurrentFocusCoordinates = MagicMock(return_value=movedCoordinates)
+
+		self.magnifier._updateMagnifier()
+
+		self.magnifier._focusManager.getCurrentFocusCoordinates.assert_called_once()
+		self.assertFalse(self.magnifier._isManualPanning)
+		self.assertEqual(
+			self.magnifier.currentCoordinates,
+			self.magnifier._clampCoordinates(movedCoordinates),
+		)
 
 	def testComputeMagnifiedViewCenterRaisesNotImplemented(self):
 		"""Base _computeMagnifiedViewCenter must raise NotImplementedError."""
 		with self.assertRaises(NotImplementedError):
 			self.magnifier._computeMagnifiedViewCenter()
 
-	def testStartTimer(self):
-		"""Starting the timer."""
-		self.magnifier._stopTimer = MagicMock()
-		callback = MagicMock()
+	def testTimerIsCreatedOnce(self) -> None:
+		"""The magnifier owns a single timer, reused by every start and stop."""
+		timer = self.magnifier._timer
+		self.assertIsInstance(timer, wx.Timer)
 
-		self.magnifier._startTimer(callback)
+		for _ in range(3):
+			self.magnifier._startTimer()
+			self.magnifier._startTimer()
+			self.magnifier._stopTimer()
 
-		self.magnifier._stopTimer.assert_called_once()
-		self.assertIsInstance(self.magnifier._timer, wx.Timer)
+		self.assertIs(self.magnifier._timer, timer)
+
+	def testStartTimer(self) -> None:
+		"""Starting the timer schedules a single update."""
+		self.magnifier._startTimer()
+
 		self.assertTrue(self.magnifier._timer.IsRunning())
+		self.assertTrue(self.magnifier._timer.IsOneShot())
+		self.assertEqual(self.magnifier._timer.GetInterval(), Magnifier._TIMER_INTERVAL_MS)
 
-		# Clean up the timer
-		self.magnifier._timer.Stop()
-		self.magnifier._timer = None
-
-	def testStopTimer(self):
-		"""Stopping the timer."""
-		# Test stopping when timer exists
-		self.magnifier._startTimer(lambda: None)
-		self.assertIsNotNone(self.magnifier._timer)
+	def testStopTimer(self) -> None:
+		"""Stopping the timer cancels the scheduled update, and is safe when none is scheduled."""
+		self.magnifier._startTimer()
+		self.magnifier._stopTimer()
+		self.assertFalse(self.magnifier._timer.IsRunning())
 
 		self.magnifier._stopTimer()
-		self.assertIsNone(self.magnifier._timer)
+		self.assertFalse(self.magnifier._timer.IsRunning())
 
-		# Test stopping when no timer exists (should not raise error)
-		self.magnifier._stopTimer()
-		self.assertIsNone(self.magnifier._timer)
+	def testTimerRunsUpdate(self) -> None:
+		"""When the timer fires, the magnifier is updated."""
+		self.magnifier._updateMagnifier = MagicMock()
+
+		self.magnifier._timer.Notify()
+
+		self.magnifier._updateMagnifier.assert_called_once_with()
 
 	def testClampCoordinates(self):
 		"""Test all boundary clamps (left, right, top, bottom) for both modes."""
@@ -577,11 +715,12 @@ class TestMagnifier(_TestMagnifier):
 		"""When screen curtain is enabled while magnifier is active, magnifier stops."""
 		self.magnifier._isActive = True
 
-		with patch("_magnifier.magnifier.ui.message"):
+		with patch("_magnifier.magnifier.ui.message") as mock_message:
 			self.magnifier.onScreenCurtainEnabled()
 
 		self.assertFalse(self.magnifier._isActive)
 		self.assertTrue(self.magnifier._screenCurtainIsActive)
+		mock_message.assert_not_called()
 
 	def testOnScreenCurtainEnabledWhenInactive(self):
 		"""When screen curtain is enabled while magnifier is already inactive, _screenCurtainIsActive is False."""
@@ -597,12 +736,13 @@ class TestMagnifier(_TestMagnifier):
 		self.magnifier._startMagnifier = MagicMock()
 		self.magnifier._updateMagnifier = MagicMock()
 
-		with patch("_magnifier.magnifier.ui.message"):
+		with patch("_magnifier.magnifier.ui.message") as mock_message:
 			self.magnifier.onScreenCurtainDisabled()
 
 		self.magnifier._startMagnifier.assert_called_once()
 		self.magnifier._updateMagnifier.assert_called_once()
 		self.assertFalse(self.magnifier._screenCurtainIsActive)
+		mock_message.assert_not_called()
 
 	def testOnScreenCurtainDisabledDoesNothingWhenFlagIsFalse(self):
 		"""When screen curtain is disabled but _screenCurtainIsActive is False, nothing happens."""

@@ -8,46 +8,52 @@ Magnifier module.
 Implements the magnifier global class and its basic functionalities.
 """
 
-from collections.abc import Callable  # noqa: I001
+import dataclasses
+import time
+
+import mouseHandler
+import screenCurtain
+import ui
+import winUser
+import wx
 from comtypes import COMError
+from exceptions import CallCancelled, LocationUnavailableError
 from logHandler import log
 from NVDAState import _TrackNVDAInitialization
-import wx
-import ui
-import screenCurtain
-import mouseHandler
-import winUser
 from winAPI import _displayTracking
 from winAPI._displayTracking import OrientationState, getPrimaryDisplayOrientation
-from .utils.types import (
-	MagnifierParameters,
-	MagnifierAction,
-	MagnifiedView,
-	MagnifierTrackingType,
-	Direction,
-	Filter,
-	Coordinates,
-)
+
 from .config import (
-	getFollowState,
-	getZoomLevel,
-	getPanStep,
-	getFilter,
-	isTrueCentered,
-	setZoomLevel,
-	setEnabled,
 	ZoomLevel,
 	_isDebug,
+	getFilter,
+	getFollowState,
+	getPanStep,
+	getZoomLevel,
+	isTrueCentered,
+	setEnabled,
+	setZoomLevel,
 )
-from .utils.focusManager import FocusManager
 from .utils.errorHandling import MagnifierStartError
+from .utils.focusManager import FocusManager
 from .utils.mouseHook import MagnifierMouseHook
+from .utils.types import (
+	Coordinates,
+	Direction,
+	Filter,
+	MagnifiedView,
+	MagnifierAction,
+	MagnifierParameters,
+	MagnifierTrackingType,
+)
 
 
 class Magnifier:
 	_TIMER_INTERVAL_MS: int = 12
 	_MARGIN_BORDER: int = 50
-	_MAX_CONSECUTIVE_ERRORS: int = 3
+	_MAX_CONSECUTIVE_ERRORS: int = 5
+	_TRACKING_FAILURE_REPORT_DELAY_SEC: float = 1.0
+	"""How long the followed source must stay unavailable before the user is told."""
 	_MAGNIFIED_VIEW: MagnifiedView
 
 	def __init__(self):
@@ -55,7 +61,8 @@ class Magnifier:
 		self._isActive: bool = False
 		self._zoomLevel: float = getZoomLevel()
 		self._panStep: int = getPanStep()
-		self._timer: None | wx.Timer = None
+		self._timer = wx.Timer()
+		self._timer.Bind(wx.EVT_TIMER, self._onTimer)
 		self._focusManager = FocusManager()
 		self._lastScreenPosition = Coordinates(0, 0)
 		self._currentCoordinates = Coordinates(0, 0)
@@ -64,11 +71,13 @@ class Magnifier:
 		self._isManualPanning: bool = False
 		self._consecutiveErrors: int = 0
 		self._recoveryAttempts: int = 0
+		self._isTrackingErrorLogged: bool = False
+		self._trackingFailureStartTime: float | None = None
+		self._isTrackingFailureReported: bool = False
 		self._mouseHook: MagnifierMouseHook | None = None
 		self._pendingMouseCoordinates = Coordinates(0, 0)
 		self._mouseUpdatePending: bool = False
-		# Register for display changes
-		_displayTracking.displayChanged.register(self._onDisplayChanged)
+		self._isTimerSuspended: bool = False
 		self._screenCurtainIsActive: bool = False
 
 	@property
@@ -172,7 +181,9 @@ class Magnifier:
 		Called when display configuration changes
 		"""
 		log.debug("Display configuration changed, updating screen dimensions")
-		self.orientationState = orientationState
+		# The notifier passes a shared state object that it mutates in place.
+		self._displayOrientation = dataclasses.replace(orientationState)
+		self.currentCoordinates = self.currentCoordinates
 
 	def _isBlockedByScreenCurtain(self) -> bool:
 		"""
@@ -210,7 +221,22 @@ class Magnifier:
 		if self._isBlockedByScreenCurtain():
 			return
 		self._isActive = True
-		self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
+		self._reportTrackingFailure(isFailed=False)
+		# The display may have changed while the magnifier was stopped.
+		self._displayOrientation = getPrimaryDisplayOrientation()
+		_displayTracking.displayChanged.register(self._onDisplayChanged)
+		try:
+			self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
+		except (COMError, LookupError, OSError, RuntimeError):
+			# Tracking reads UIA and COM; its failure must not prevent the magnifier from starting.
+			log.warning(
+				"Magnifier could not determine what to track; starting at the screen centre",
+				exc_info=True,
+			)
+			self.currentCoordinates = Coordinates(
+				self._displayOrientation.width // 2,
+				self._displayOrientation.height // 2,
+			)
 		self._mouseHook = MagnifierMouseHook(self._onMouseMove)
 		self._mouseHook.start()
 
@@ -218,44 +244,107 @@ class Magnifier:
 		"""
 		Update the magnifier position and content.
 		This method is called repeatedly by the timer.
+		If the tracked location is unavailable, the current view is kept.
+		Unexpected tracking errors also keep the view, and are logged once until tracking succeeds again.
+		When the followed source stays unavailable for a while, this is announced once.
+		Only Magnification API errors count towards recovery:
 		On transient errors (below threshold): reschedules itself to keep running.
 		On repeated errors (at threshold): delegates rescheduling to _attemptRecovery.
 		"""
 		if not self._isActive:
 			return
+		recoveryScheduled = False
 		try:
-			self._managePanning()
-			if not self._isManualPanning:
-				self.currentCoordinates = self._focusManager.getCurrentFocusCoordinates()
-			self._doUpdate()
-			self._consecutiveErrors = 0
-			self._recoveryAttempts = 0
-		except (OSError, COMError):
-			self._consecutiveErrors += 1
-			if self._consecutiveErrors >= self._MAX_CONSECUTIVE_ERRORS:
-				log.error(  # noqa: G201
-					f"Error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS}), attempting recovery",
-					exc_info=True,
+			isTrackingFailed = False
+			try:
+				# The focus manager reports changes since its previous call, so query it once per update.
+				focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
+				self._managePanning(focusCoordinates)
+				if not self._isManualPanning:
+					self.currentCoordinates = focusCoordinates
+			except LocationUnavailableError:
+				# #20860: A tracking failure is not a magnification failure.
+				isTrackingFailed = True
+				if _isDebug():
+					log.debug("Tracked location unavailable, keeping current magnifier view", exc_info=True)
+			except CallCancelled:
+				raise
+			except Exception:
+				# An error type nobody anticipated: keep the view, and log once per failure run
+				# rather than on every update.
+				isTrackingFailed = True
+				if not self._isTrackingErrorLogged:
+					log.exception("Magnifier could not determine what to track, keeping the current view")
+					self._isTrackingErrorLogged = True
+			else:
+				self._isTrackingErrorLogged = False
+				isTrackingFailed = (
+					self._focusManager.getLastFocusType() in self._focusManager.getFailedSources()
 				)
-				try:
-					self._attemptRecovery()
-				except Exception:
-					# Recovery itself failed: reset counter and restart timer directly
-					# to avoid a permanent freeze (recovery is responsible for rescheduling
-					# but may fail before reaching that point).
+			self._reportTrackingFailure(isTrackingFailed)
+			try:
+				self._doUpdate()
+				self._consecutiveErrors = 0
+				self._recoveryAttempts = 0
+			except (OSError, COMError):
+				self._consecutiveErrors += 1
+				if self._consecutiveErrors >= self._MAX_CONSECUTIVE_ERRORS:
 					log.error(  # noqa: G201
-						"Recovery failed unexpectedly, restarting timer to prevent freeze",
+						f"Error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS}), attempting recovery",
 						exc_info=True,
 					)
-					self._consecutiveErrors = 0
-					self._startTimer(self._updateMagnifier)
-				return
-			log.warning(
-				f"Transient error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS})",
-				exc_info=True,
-			)
-		# Always reschedule the timer to keep the magnifier alive
-		self._startTimer(self._updateMagnifier)
+					try:
+						self._attemptRecovery()
+					except Exception:
+						# Recovery itself failed: reset counter and let the timer restart
+						# to avoid a permanent freeze (recovery is responsible for rescheduling
+						# but may fail before reaching that point).
+						log.error(  # noqa: G201
+							"Recovery failed unexpectedly, restarting timer to prevent freeze",
+							exc_info=True,
+						)
+						self._consecutiveErrors = 0
+					else:
+						recoveryScheduled = True
+					return
+				log.warning(
+					f"Transient error updating magnifier ({self._consecutiveErrors}/{self._MAX_CONSECUTIVE_ERRORS})",
+					exc_info=True,
+				)
+		finally:
+			# Always reschedule the timer to keep the magnifier alive, even after an unexpected error.
+			if self._isActive and not recoveryScheduled:
+				self._startTimer()
+
+	def _reportTrackingFailure(self, isFailed: bool) -> None:
+		"""
+		Announce once when the followed source has been unavailable for a while.
+
+		The delay is measured in elapsed time rather than update cycles: the timer is only rescheduled
+		after an update has finished, and the conditions that break tracking also slow updates down.
+
+		:param isFailed: Whether the followed source could not be tracked during this update.
+		"""
+		if not isFailed:
+			self._trackingFailureStartTime = None
+			self._isTrackingFailureReported = False
+			return
+		now = time.monotonic()
+		if self._trackingFailureStartTime is None:
+			self._trackingFailureStartTime = now
+			return
+		if self._isTrackingFailureReported:
+			return
+		if now - self._trackingFailureStartTime < self._TRACKING_FAILURE_REPORT_DELAY_SEC:
+			return
+		self._isTrackingFailureReported = True
+		ui.message(
+			pgettext(
+				"magnifier",
+				# Translators: Announced when the magnifier has been unable to follow the focus, caret or cursor for a while.
+				"Magnifier tracking unavailable",
+			),
+		)
 
 	def _doUpdate(self) -> None:
 		"""
@@ -273,7 +362,7 @@ class Magnifier:
 		if _isDebug():
 			log.debug("Attempting base magnifier recovery")
 		self._consecutiveErrors = 0
-		self._startTimer(self._updateMagnifier)
+		self._startTimer()
 
 	def _onMouseMove(self, x: int, y: int) -> None:
 		"""
@@ -304,13 +393,25 @@ class Magnifier:
 		where a mouse-driven update touches the Magnification API.
 		"""
 		self._mouseUpdatePending = False
-		if not self._isActive or self._isManualPanning:
+		# Checked again here: the setting may have changed since the move was queued, e.g. by a configuration reload.
+		if not self._isActive or self._isManualPanning or not getFollowState(MagnifierTrackingType.MOUSE):
 			return
 		try:
 			self.currentCoordinates = self._pendingMouseCoordinates
 			self._doUpdate()
 		except OSError:
-			pass
+			# Counted so that a persistent failure still reaches recovery through the update loop.
+			if _isDebug():
+				log.debugWarning("Error applying mouse driven magnifier update", exc_info=True)
+			self._consecutiveErrors += 1
+
+	def _cancelPendingVisualUpdates(self) -> None:
+		"""
+		Drop any rate limited call that could still repaint the screen after the magnifier has stopped.
+
+		Whatever stops the magnifier, typically the screen curtain, owns the screen from then on.
+		Subclasses that defer native calls must override this.
+		"""
 
 	def _stopMagnifier(self) -> None:
 		"""
@@ -318,6 +419,7 @@ class Magnifier:
 		"""
 		if not self._isActive:
 			return
+		self._cancelPendingVisualUpdates()
 		if self._mouseHook:
 			self._mouseHook.stop()
 			self._mouseHook = None
@@ -326,23 +428,57 @@ class Magnifier:
 		# Unregister from display changes
 		_displayTracking.displayChanged.unregister(self._onDisplayChanged)
 
+	def _suspend(self) -> bool:
+		"""
+		Stop following and updating, leaving the magnified view on screen as it is.
+
+		:return: True if suspended; False if the magnifier is in a state that cannot be suspended.
+		"""
+		if self._mouseHook:
+			self._mouseHook.stop()
+			self._mouseHook = None
+		self._isTimerSuspended = self._timer.IsRunning()
+		self._stopTimer()
+		return True
+
+	def _resume(self) -> None:
+		"""Resume following and updating after :meth:`_suspend`."""
+		self._mouseHook = MagnifierMouseHook(self._onMouseMove)
+		self._mouseHook.start()
+		if self._isTimerSuspended:
+			self._startTimer()
+
+	def _applyConfig(self) -> None:
+		"""Apply the current configuration in place, keeping the view position."""
+		self._zoomLevel = getZoomLevel()
+		self._panStep = getPanStep()
+		newFilter = getFilter()
+		if newFilter != self.filterType:
+			self.filterType = newFilter
+		# Clamp to the limits of the new zoom level.
+		self.currentCoordinates = self.currentCoordinates
+
 	def onScreenCurtainEnabled(self) -> None:
 		"""
 		Called when screen curtain is being enabled.
 		Handles disabling magnifier if it's active.
 		"""
 		if self._isActive:
-			ui.message(
-				pgettext(
-					"magnifier",
-					# Translators: Spoken message when magnifier is disabled due to screen curtain being enabled.
-					"Disabling magnifier",
-				),
-			)
 			self._stopMagnifier()
 			self._screenCurtainIsActive = True
 		else:
 			self._screenCurtainIsActive = False
+
+	def _isWaitingForScreenCurtain(self) -> bool:
+		"""
+		Whether the screen curtain stopped the magnifier and is still enabled,
+		so that the magnifier restarts when the curtain is disabled.
+		"""
+		return bool(
+			self._screenCurtainIsActive
+			and screenCurtain.screenCurtain
+			and screenCurtain.screenCurtain.enabled,
+		)
 
 	def onScreenCurtainDisabled(self) -> None:
 		"""
@@ -351,13 +487,6 @@ class Magnifier:
 		"""
 		if self._screenCurtainIsActive:
 			self._screenCurtainIsActive = False
-			ui.message(
-				pgettext(
-					"magnifier",
-					# Translators: Spoken message when magnifier is re-enabled after screen curtain is disabled.
-					"Re-enabling magnifier",
-				),
-			)
 			try:
 				self._startMagnifier()
 			except MagnifierStartError as e:
@@ -426,11 +555,12 @@ class Magnifier:
 
 		return (x, y) != (originalX, originalY)
 
-	def _managePanning(self) -> None:
+	def _managePanning(self, focusCoordinates: Coordinates) -> None:
 		"""
 		Ensure that manual panning mode (self._isManualPanning) is set to False when focus coordinates change.
+
+		:param focusCoordinates: The coordinates reported by the focus manager for this update.
 		"""
-		focusCoordinates = self._focusManager.getCurrentFocusCoordinates()
 		if self._isManualPanning:  # noqa: SIM102
 			if focusCoordinates != self._lastFocusCoordinates:
 				self._isManualPanning = False
@@ -455,28 +585,20 @@ class Magnifier:
 		"""
 		raise NotImplementedError("Subclasses must implement this method")
 
-	def _startTimer(self, callback: Callable[[], None] = None) -> None:  # noqa: RUF013
-		"""
-		Start the timer with a callback function
+	def _onTimer(self, evt: wx.TimerEvent) -> None:
+		self._updateMagnifier()
 
-		:param callback: The function to call when the timer expires
+	def _startTimer(self) -> None:
 		"""
-		self._stopTimer()
-		self._timer = wx.Timer()
-		self._timer.Bind(wx.EVT_TIMER, lambda evt: callback())
-		self._timer.Start(self._TIMER_INTERVAL_MS, oneShot=True)
+		Schedule the next update, replacing any update already scheduled.
+		"""
+		self._timer.StartOnce(self._TIMER_INTERVAL_MS)
 
 	def _stopTimer(self) -> None:
 		"""
-		Stop timer execution
+		Cancel the scheduled update, if any.
 		"""
-		if self._timer:
-			if self._timer.IsRunning():
-				self._timer.Stop()
-			self._timer = None
-		else:
-			if _isDebug():
-				log.debug("no timer to stop")
+		self._timer.Stop()
 
 	def _getMagnifierParameters(self, coordinates: Coordinates) -> MagnifierParameters:
 		"""
