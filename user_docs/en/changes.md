@@ -1,15 +1,5 @@
 # What's New in NVDA
 
-## 2026.3.2
-
-* The Magnifier now announces when it has been unable to follow the focus, caret or cursor for more than a second. (#21111, @JulienCochuyt)
-
-* Pressing `NVDA+shift+l` again during the Magnifier's screen overview now ends it, instead of reporting that it is already active. (#21154, @JulienCochuyt)
-
-### Bug Fixes
-
-* The screen is no longer briefly revealed when enabling the Screen Curtain just after changing the Magnifier's colour filter. (#21109, @JulienCochuyt)
-
 ## 2026.3.1
 
 This is a patch release to fix security issues.
@@ -22,8 +12,6 @@ Please responsibly disclose security issues following NVDA's [security policy](h
 * Fixed NVDA leaking the Remote Access key. (#21037, [GHSA-prj7-9c78-744j](https://github.com/nvaccess/nvda/security/advisories/GHSA-prj7-9c78-744j))
 * Updated certifi to 2026.10.23. ([GHSA-3j65-46c5-4grp](https://github.com/nvaccess/nvda/security/advisories/GHSA-3j65-46c5-4grp))
 * Prevent DOS when Remote Access is running. ([GHSA-v99h-jr79-r5cr](https://github.com/nvaccess/nvda/security/advisories/GHSA-v99h-jr79-r5cr), @Cem-Kaya)
-
-* The magnifier now follows what is being read when navigating in math expressions. (#20321, @CyrilleB79)
 
 ### Bug Fixes
 
