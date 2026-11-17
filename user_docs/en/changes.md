@@ -40,6 +40,7 @@ Currently this setting is only supported in Microsoft Word. (#20922, @burrm)
 #### Magnifier
 
 * The Magnifier now adapts when the screen resolution or orientation changes, or another display is used, including after it has been turned off and on. (#21146, @JulienCochuyt)
+* When typing at the end of the text in Firefox edit fields, the Magnifier now keeps following the caret instead of jumping to the edit field's top-left corner. (#20415, @JulienCochuyt)
 
 ### Changes for Developers
 
