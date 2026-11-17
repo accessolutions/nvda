@@ -13,11 +13,24 @@ from logHandler import log
 import api
 import winUser
 import time
+import unicodedata
 import locationHelper
 import textInfos
-from textInfos.offsets import OffsetsTextInfo
 from .types import Coordinates, MagnifierTrackingType
 from ..config import getFollowState, _isDebug
+
+_LINE_BREAKS = "\r\n\u2028\u2029"
+
+
+def _isRightToLeft(text: str) -> bool | None:
+	"""Direction of the last strongly directional character of the text, ``None`` if it has none."""
+	for character in reversed(text):
+		bidi = unicodedata.bidirectional(character)
+		if bidi in ("R", "AL"):
+			return True
+		if bidi == "L":
+			return False
+	return None
 
 
 def _isWindowRTL(obj) -> bool:
@@ -247,37 +260,26 @@ class FocusManager:
 		"""
 		Get a point for the start of a text range with a local end-of-text fallback.
 
-		When a collapsed TextInfo is positioned at an exclusive end offset, use the
-		right edge of the previous character if available. This keeps the workaround
-		local to the magnifier instead of changing TextInfo behavior globally.
+		When a collapsed TextInfo has no location, as at the end of the text, locate it from the
+		previous character. This keeps the workaround local to the magnifier instead of changing
+		TextInfo behavior globally.
 		"""
 		try:
 			return textInfo.pointAtStart
 		except (NotImplementedError, LookupError, AttributeError, COMError, RuntimeError) as e:
 			if _isDebug():
 				log.debug(f"pointAtStart failed for {textInfo!r}: {e}")
-			if isinstance(textInfo, OffsetsTextInfo) and textInfo.isCollapsed and textInfo._startOffset > 0:
-				prevOffset = textInfo._startOffset - 1
-				try:
-					return textInfo._getBoundingRectFromOffset(prevOffset).topRight
-				except (NotImplementedError, LookupError, AttributeError) as e:
-					if _isDebug():
-						log.debug(f"_getBoundingRectFromOffset failed: {e}")
-					try:
-						return textInfo._getPointFromOffset(prevOffset)
-					except (NotImplementedError, LookupError, AttributeError) as e:
-						if _isDebug():
-							log.debug(f"_getPointFromOffset failed: {e}", exc_info=True)
-			elif (point := self._getPointAfterPreviousCharacter(textInfo)) is not None:
+			if (point := self._getPointAfterPreviousCharacter(textInfo)) is not None:
 				return point
 			raise
 
 	def _getPointAfterPreviousCharacter(self, textInfo: textInfos.TextInfo) -> locationHelper.Point | None:
 		"""
-		Get the right edge of the character before a collapsed TextInfo, through the TextInfo API only.
+		Locate a collapsed TextInfo from the character before it, for a caret at the end of the text.
 
-		Used for TextInfos without offset-based internals, such as Firefox's compound documents,
-		where the caret at the end of the text has no location (#20415).
+		The caret is on the trailing edge of the previous character: its right edge in left-to-right
+		text, its left edge in right-to-left text. After a line break, it is at the start of the next
+		line: the start edge of the previous line, at that line's bottom.
 
 		:return: The point, or ``None`` if the TextInfo is not collapsed or the previous character has no location.
 		"""
@@ -288,14 +290,32 @@ class FocusManager:
 			if not previousCharacter.move(textInfos.UNIT_CHARACTER, -1):
 				return None
 			previousCharacter.expand(textInfos.UNIT_CHARACTER)
+			text = previousCharacter.text
+			if text and not text.strip(_LINE_BREAKS):
+				previousLine = previousCharacter.copy()
+				previousLine.expand(textInfos.UNIT_LINE)
+				rects = previousLine.boundingRects
+				if not rects:
+					return None
+				isRightToLeft = _isRightToLeft(previousLine.text)
+				return locationHelper.Point(
+					rects[0].right if isRightToLeft else rects[0].left,
+					max(rect.bottom for rect in rects),
+				)
 			rects = previousCharacter.boundingRects
+			if not rects:
+				return None
+			isRightToLeft = _isRightToLeft(text)
+			if isRightToLeft is None:
+				lineUpToCaret = previousCharacter.copy()
+				lineUpToCaret.expand(textInfos.UNIT_LINE)
+				lineUpToCaret.setEndPoint(previousCharacter, "endToEnd")
+				isRightToLeft = _isRightToLeft(lineUpToCaret.text)
 		except (NotImplementedError, LookupError, AttributeError, COMError, RuntimeError) as e:
 			if _isDebug():
 				log.debug(f"Previous character location failed for {textInfo!r}: {e}")
 			return None
-		if not rects:
-			return None
-		return rects[-1].topRight
+		return rects[-1].topLeft if isRightToLeft else rects[-1].topRight
 
 	def _getNavigatorObjectLocation(self) -> Coordinates | None:
 		"""
