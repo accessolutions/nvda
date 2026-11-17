@@ -1741,6 +1741,7 @@ The magnifier will then:
 1. When the mouse remains still for approximately 2 seconds, automatically zoom back in to the original zoom level at the new mouse position
 
 Moving the mouse before the zoom-back occurs gives you more time to view the full screen.
+To return to the original zoom level before then, press `NVDA+shift+l` again.
 
 ### Magnifier Settings {#MagnifierSettings}
 
