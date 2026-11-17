@@ -1721,6 +1721,9 @@ This mode keeps the tracked element at the center of the screen and clamps to th
 
 To cycle through the tracking modes, please assign a custom gesture using the [Input Gestures dialog](#InputGestures).
 
+If the magnifier cannot locate what it is following, for example because an application is not responding, the magnified area stays where it is.
+When this lasts for more than a second, NVDA announces "Magnifier tracking unavailable" once.
+
 ### Show entire screen overview {#MagnifierScreenOverview}
 
 The magnifier can temporarily display an overview of the entire screen, making it useful for presentations or when you need to quickly understand the overall screen layout.
