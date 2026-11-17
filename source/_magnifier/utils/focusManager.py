@@ -256,24 +256,46 @@ class FocusManager:
 		except (NotImplementedError, LookupError, AttributeError, COMError, RuntimeError) as e:
 			if _isDebug():
 				log.debug(f"pointAtStart failed for {textInfo!r}: {e}")
-			# Only apply the fallback for TextInfos exposing the offset-based internals we need.
-			# Otherwise, preserve the original failure.
-			if not (
-				isinstance(textInfo, OffsetsTextInfo) and textInfo.isCollapsed and textInfo._startOffset > 0
-			):
-				raise
-			prevOffset = textInfo._startOffset - 1
-			try:
-				return textInfo._getBoundingRectFromOffset(prevOffset).topRight
-			except (NotImplementedError, LookupError, AttributeError) as e:
-				if _isDebug():
-					log.debug(f"_getBoundingRectFromOffset failed: {e}")
+			if isinstance(textInfo, OffsetsTextInfo) and textInfo.isCollapsed and textInfo._startOffset > 0:
+				prevOffset = textInfo._startOffset - 1
 				try:
-					return textInfo._getPointFromOffset(prevOffset)
+					return textInfo._getBoundingRectFromOffset(prevOffset).topRight
 				except (NotImplementedError, LookupError, AttributeError) as e:
 					if _isDebug():
-						log.debug(f"_getPointFromOffset failed: {e}", exc_info=True)
+						log.debug(f"_getBoundingRectFromOffset failed: {e}")
+					try:
+						return textInfo._getPointFromOffset(prevOffset)
+					except (NotImplementedError, LookupError, AttributeError) as e:
+						if _isDebug():
+							log.debug(f"_getPointFromOffset failed: {e}", exc_info=True)
+			elif (point := self._getPointAfterPreviousCharacter(textInfo)) is not None:
+				return point
 			raise
+
+	def _getPointAfterPreviousCharacter(self, textInfo: textInfos.TextInfo) -> locationHelper.Point | None:
+		"""
+		Get the right edge of the character before a collapsed TextInfo, through the TextInfo API only.
+
+		Used for TextInfos without offset-based internals, such as Firefox's compound documents,
+		where the caret at the end of the text has no location (#20415).
+
+		:return: The point, or ``None`` if the TextInfo is not collapsed or the previous character has no location.
+		"""
+		try:
+			if not textInfo.isCollapsed:
+				return None
+			previousCharacter = textInfo.copy()
+			if not previousCharacter.move(textInfos.UNIT_CHARACTER, -1):
+				return None
+			previousCharacter.expand(textInfos.UNIT_CHARACTER)
+			rects = previousCharacter.boundingRects
+		except (NotImplementedError, LookupError, AttributeError, COMError, RuntimeError) as e:
+			if _isDebug():
+				log.debug(f"Previous character location failed for {textInfo!r}: {e}")
+			return None
+		if not rects:
+			return None
+		return rects[-1].topRight
 
 	def _getNavigatorObjectLocation(self) -> Coordinates | None:
 		"""

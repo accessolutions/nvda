@@ -107,6 +107,8 @@ class TestFocusManager(unittest.TestCase):
 			type(mock_review.return_value).pointAtStart = property(
 				fget=Mock(side_effect=NotImplementedError),
 			)
+			# Not collapsed: no end-of-text fallback applies.
+			mock_review.return_value.isCollapsed = False
 
 			coords = self.focusManager._getReviewPosition()
 			self.assertIsNone(coords)
@@ -122,7 +124,7 @@ class TestFocusManager(unittest.TestCase):
 		"""_getReviewPosition catches COMError from pointAtStart."""
 
 		comError = _ctypes.COMError(-2147418113, "Défaillance irrémédiable", None)
-		mockReviewPos = Mock()
+		mockReviewPos = Mock(isCollapsed=False)
 		type(mockReviewPos).pointAtStart = property(lambda self: (_ for _ in ()).throw(comError))
 
 		with patch("_magnifier.utils.focusManager.api.getReviewPosition", return_value=mockReviewPos):
