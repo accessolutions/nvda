@@ -44,6 +44,7 @@
 * Magnifier no longer flickers and stops when NVDA cannot get the review cursor position, such as when opening some browseable messages, closing a Firefox tab, or switching to Windows Terminal. (#20860, @ChristosBouronikos)
 * The screen overview no longer continues after the Magnifier is turned off, and the Magnifier then restarts at its zoom level. The overview can no longer get stuck as already active after an error. Zooming during the overview now ends it instead of failing. (#21148, @JulienCochuyt)
 * Reloading or reverting the configuration no longer briefly turns off the Magnifier and its colour filter, and the magnified view keeps its position. (#20786, @JulienCochuyt)
+* NVDA's Magnifier no longer starts while Windows Magnifier is running at 100%, which made the two conflict. (#21152, @JulienCochuyt)
 
 ### Changes for Developers
 
