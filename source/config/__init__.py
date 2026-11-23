@@ -488,6 +488,7 @@ class ConfigManager:
 
 	BASE_ONLY_SECTIONS = {
 		"general",
+		"magnifier",
 		"update",
 		"development",
 		"addonStore",

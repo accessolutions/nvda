@@ -6582,6 +6582,7 @@ class NVDASettingsDialog(MultiCategorySettingsDialog):
 		if (
 			not NvdaSettingsDialogActiveConfigProfile
 			or isinstance(self.currentCategory, GeneralSettingsPanel)
+			or isinstance(self.currentCategory, MagnifierPanel)
 			or isinstance(self.currentCategory, AddonStorePanel)
 			or isinstance(self.currentCategory, RemoteSettingsPanel)
 			or isinstance(self.currentCategory, MathSettingsPanel)
