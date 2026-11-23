@@ -49,6 +49,7 @@ class FocusManager:
 		self._lastValidReviewPosition = Coordinates(0, 0)
 		self._lastValidNavigatorObjectPosition = Coordinates(0, 0)
 		self._lastSystemFocusChangeTime: float = 0.0
+		self._failedSources: set[MagnifierTrackingType] = set()
 
 	def getCurrentFocusCoordinates(self) -> Coordinates:
 		"""
@@ -63,6 +64,7 @@ class FocusManager:
 		:return: The (x, y) coordinates of the current focus
 		"""
 		now = time.monotonic()
+		self._failedSources.clear()
 
 		mousePosition = self._getMousePosition()
 		systemFocusPosition = self._getSystemFocusPosition()
@@ -223,6 +225,7 @@ class FocusManager:
 						"Failed to get focus object location, falling back to last valid position",
 						exc_info=True,
 					)
+		self._failedSources.add(MagnifierTrackingType.SYSTEM_FOCUS)
 		return self._lastValidSystemFocusPosition
 
 	def _getReviewPosition(self) -> Coordinates | None:
@@ -240,6 +243,7 @@ class FocusManager:
 					self._lastValidReviewPosition = coords
 				return coords
 		except LocationUnavailableError:
+			self._failedSources.add(MagnifierTrackingType.REVIEW)
 			if _isDebug():
 				log.debug("Failed to get review position", exc_info=True)
 		return None
@@ -292,6 +296,7 @@ class FocusManager:
 		except Exception:
 			# The navigator object may not have a valid location,
 			# or fetching it from the review position may fail.
+			self._failedSources.add(MagnifierTrackingType.NAVIGATOR_OBJECT)
 			if _isDebug():
 				log.debug("Failed to get navigator object location", exc_info=True)
 		return None
@@ -318,3 +323,13 @@ class FocusManager:
 		:return: The type of the last focused object, or None when no focus source is active.
 		"""
 		return self._lastFocusedObject
+
+	def getFailedSources(self) -> frozenset[MagnifierTrackingType]:
+		"""
+		Get the tracking sources whose location could not be retrieved during the last update.
+
+		A failed source falls back to its last known position, or is ignored for the review cursor.
+
+		:return: The sources that failed during the last call to :meth:`getCurrentFocusCoordinates`.
+		"""
+		return frozenset(self._failedSources)
