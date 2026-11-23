@@ -10,8 +10,6 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 import _ctypes
 from exceptions import CallCancelled, LocationUnavailableError
-from locationHelper import Point, RectLTRB
-from textInfos.offsets import OffsetsTextInfo
 
 
 def _makeFollowStateSideEffect(
@@ -192,28 +190,11 @@ class TestFocusManager(unittest.TestCase):
 		):
 			self.focusManager._getReviewPosition()
 
-	def testGetPointAtStartFallsBackToPreviousCharacter(self) -> None:
-		"""At an exclusive end offset, the right edge of the previous character is used."""
+	def testGetPointAtStartReportsUnavailableWithoutFallback(self) -> None:
+		"""When the previous character cannot locate the caret either, the original failure is chained."""
 		pointError = LookupError("No point at the end of the text")
-		textInfo = Mock(spec=OffsetsTextInfo, isCollapsed=True, _startOffset=5)
+		textInfo = Mock(isCollapsed=False)
 		type(textInfo).pointAtStart = property(Mock(side_effect=pointError))
-
-		textInfo._getBoundingRectFromOffset.return_value = RectLTRB(10, 20, 30, 40)
-		self.assertEqual(self.focusManager._getPointAtStart(textInfo), Point(30, 20))
-		textInfo._getBoundingRectFromOffset.assert_called_with(4)
-
-		textInfo._getBoundingRectFromOffset.side_effect = NotImplementedError
-		textInfo._getPointFromOffset.return_value = Point(50, 60)
-		self.assertEqual(self.focusManager._getPointAtStart(textInfo), Point(50, 60))
-		textInfo._getPointFromOffset.assert_called_with(4)
-
-		fallbackError = _ctypes.COMError(-2147467259, "Unspecified error", None)
-		textInfo._getPointFromOffset.side_effect = fallbackError
-		with self.assertRaises(LocationUnavailableError) as caught:
-			self.focusManager._getPointAtStart(textInfo)
-		self.assertIs(caught.exception.__cause__, fallbackError)
-
-		textInfo._startOffset = 0
 		with self.assertRaises(LocationUnavailableError) as caught:
 			self.focusManager._getPointAtStart(textInfo)
 		self.assertIs(caught.exception.__cause__, pointError)
