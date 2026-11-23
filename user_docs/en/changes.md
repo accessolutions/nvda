@@ -50,6 +50,7 @@ The overview can no longer get stuck as already active after an error.
 Zooming during the overview now ends it instead of failing. (#21148, @JulienCochuyt)
 * Reloading or reverting the configuration no longer briefly turns off the Magnifier and its colour filter, and the magnified view keeps its position. (#20786, @JulienCochuyt)
 * NVDA's Magnifier no longer starts while Windows Magnifier is running at 100%, which made the two conflict. (#21152, @JulienCochuyt)
+* When typing at the end of the text in Firefox edit fields, the Magnifier now keeps following the caret instead of jumping to the edit field's top-left corner. (#20415, @JulienCochuyt)
 
 ### Changes for Developers
 
