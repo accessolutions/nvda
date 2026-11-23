@@ -19,6 +19,7 @@ Currently this setting is only supported in Microsoft Word. (#20922, @burrm)
 * The "Maximum number of characters on one line" browse mode setting can now be set from 0 to 1000 characters, instead of 10 to 250. (#20478, @think-tank0)
   * Setting it to 0 means lines are no longer split by length.
 * The Magnifier now announces when it has been unable to follow the focus, caret or cursor for more than a second. (#21111, @JulienCochuyt)
+* Pressing `NVDA+shift+l` again during the Magnifier's screen overview now ends it, instead of reporting that it is already active. (#21154, @JulienCochuyt)
 
 ### Bug Fixes
 
