@@ -250,7 +250,7 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 		# MagSetFullscreenColorEffect: once in _clearStaleApiState + once in _applyFilter
 		self.assertEqual(self.mock_mag_fs.MagSetFullscreenColorEffect.call_count, 2)
 		self.assertEqual(magnifier._consecutiveErrors, 0)
-		magnifier._startTimer.assert_called_once_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_once_with()
 
 		magnifier._stopMagnifier()
 
@@ -283,13 +283,13 @@ class TestFullscreenMagnifierEndToEnd(_TestMagnifier):
 		# First update — error
 		magnifier._updateMagnifier()
 		self.assertEqual(magnifier._consecutiveErrors, 1)
-		magnifier._startTimer.assert_called_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_with()
 
 		# Second update — success
 		magnifier._startTimer.reset_mock()
 		magnifier._updateMagnifier()
 		self.assertEqual(magnifier._consecutiveErrors, 0)
-		magnifier._startTimer.assert_called_with(magnifier._updateMagnifier)
+		magnifier._startTimer.assert_called_with()
 
 		magnifier._stopMagnifier()
 
@@ -362,7 +362,7 @@ class TestRecoveryFlashLimiter(_TestMagnifier):
 		self.fsMagnifier._attemptRecovery()
 
 		self.fsMagnifier._conductRecoveryFailure.assert_not_called()
-		self.fsMagnifier._startTimer.assert_called_once_with(self.fsMagnifier._updateMagnifier)
+		self.fsMagnifier._startTimer.assert_called_once_with()
 		self.assertEqual(self.fsMagnifier._consecutiveErrors, 0)
 
 
@@ -432,7 +432,7 @@ class TestFullScreenMagnifierApi(_TestMagnifier):
 			magnifier._startMagnifier()
 
 		self.assertFalse(magnifier._isActive)
-		self.assertIsNone(magnifier._timer)
+		self.assertFalse(magnifier._timer.IsRunning())
 
 	def testCannotStartWhenMagInitializeFails(self):
 		"""
@@ -445,7 +445,7 @@ class TestFullScreenMagnifierApi(_TestMagnifier):
 			magnifier._startMagnifier()
 
 		self.assertFalse(magnifier._isActive)
-		self.assertIsNone(magnifier._timer)
+		self.assertFalse(magnifier._timer.IsRunning())
 
 	def testRecoveryCapStopsMagnifier(self):
 		"""After _MAX_RECOVERY_ATTEMPTS failed attempts, the magnifier stops and the user is notified."""
